@@ -39,6 +39,7 @@ import type {
   PersonalAccessToken,
   CreatePersonalAccessTokenRequest,
   CreatePersonalAccessTokenResponse,
+  CliDeviceVerifyResponse,
   RuntimeUsage,
   IssueUsageSummary,
   RuntimeHourlyActivity,
@@ -1233,6 +1234,31 @@ export class ApiClient {
 
   async revokePersonalAccessToken(id: string): Promise<void> {
     await this.fetch(`/api/tokens/${id}`, { method: "DELETE" });
+  }
+
+  // CLI device authorization (browser-side of the RFC 8628 flow).
+  // The user pastes or clicks through the verify URL; these methods back the
+  // "Authorize this device?" page. /start and /poll are CLI-only and not
+  // exposed here.
+  async verifyCliDevice(userCode: string): Promise<CliDeviceVerifyResponse> {
+    return this.fetch("/api/cli/device/verify", {
+      method: "POST",
+      body: JSON.stringify({ user_code: userCode }),
+    });
+  }
+
+  async approveCliDevice(userCode: string): Promise<void> {
+    await this.fetch("/api/cli/device/approve", {
+      method: "POST",
+      body: JSON.stringify({ user_code: userCode }),
+    });
+  }
+
+  async denyCliDevice(userCode: string): Promise<void> {
+    await this.fetch("/api/cli/device/deny", {
+      method: "POST",
+      body: JSON.stringify({ user_code: userCode }),
+    });
   }
 
   // File Upload & Attachments

@@ -253,6 +253,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Public API
 	r.Get("/api/config", h.GetConfig)
+	// Public config — deployment metadata the CLI needs before it has a token
+	// (primarily the browser-facing app URL so it can compose the verify link).
+	r.Get("/api/public/config", h.GetPublicConfig)
+
+	// CLI device authorization (public — the CLI has no credentials yet)
+	r.Post("/api/cli/device/start", h.StartCLIDeviceAuth)
+	r.Post("/api/cli/device/poll", h.PollCLIDeviceAuth)
 
 	// Webhook ingress for autopilots. Outside the authenticated group on
 	// purpose: the bearer token in the URL path IS the credential. Workspace
@@ -364,6 +371,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/", h.CreatePersonalAccessToken)
 			r.Delete("/{id}", h.RevokePersonalAccessToken)
 		})
+
+		// CLI device authorization (authenticated — user approves in the browser)
+		r.Post("/api/cli/device/verify", h.VerifyCLIDeviceAuth)
+		r.Post("/api/cli/device/approve", h.ApproveCLIDeviceAuth)
+		r.Post("/api/cli/device/deny", h.DenyCLIDeviceAuth)
 
 		// --- Workspace-scoped routes (all require workspace membership) ---
 		r.Group(func(r chi.Router) {

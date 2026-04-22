@@ -163,6 +163,16 @@ export interface CreatePersonalAccessTokenResponse extends PersonalAccessToken {
   token: string;
 }
 
+// CLI device authorization (RFC 8628-style flow — see handler/cli_device.go).
+// The browser only interacts with /verify and /approve|/deny; the /start and
+// /poll endpoints are called by the CLI itself, so their types aren't needed
+// in the web client.
+export interface CliDeviceVerifyResponse {
+  hostname: string;
+  requested_at: string;
+  expires_at: string;
+}
+
 // Pagination
 export interface PaginationParams {
   limit?: number;

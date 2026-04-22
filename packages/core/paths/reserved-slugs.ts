@@ -30,6 +30,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "verify",
   "reset",
   "password",
+  "cli", // global /cli/verify device-authorization page
   "onboarding",
 
   // Platform / marketing routes (current + likely-future)

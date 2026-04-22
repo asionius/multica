@@ -75,6 +75,7 @@ describe("global path / reserved slug consistency", () => {
     "/workspaces/",
     "/invite/",
     "/auth/",
+    "/cli/",
   ];
 
   it("isGlobalPath agrees with the canonical global prefix list", () => {

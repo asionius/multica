@@ -35,6 +35,7 @@ describe("paths (global)", () => {
     expect(paths.newWorkspace()).toBe("/workspaces/new");
     expect(paths.invite("inv-1")).toBe("/invite/inv-1");
     expect(paths.authCallback()).toBe("/auth/callback");
+    expect(paths.cliVerify()).toBe("/cli/verify");
   });
 });
 
@@ -44,6 +45,7 @@ describe("isGlobalPath", () => {
     expect(isGlobalPath("/workspaces/new")).toBe(true);
     expect(isGlobalPath("/invite/abc")).toBe(true);
     expect(isGlobalPath("/auth/callback")).toBe(true);
+    expect(isGlobalPath("/cli/verify")).toBe(true);
   });
 
   it("returns false for workspace-scoped paths", () => {

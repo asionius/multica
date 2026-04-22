@@ -45,6 +45,7 @@
     "./invitations": "./invitations/index.ts",
     "./onboarding": "./onboarding/index.ts",
     "./platform": "./platform/index.ts",
+    "./cli/verify-device-page": "./cli/verify-device-page.tsx",
     "./i18n": "./i18n/index.ts",
     "./locales": "./locales/index.ts",
     "./locales/*": "./locales/*"
