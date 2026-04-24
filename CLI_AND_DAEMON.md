@@ -46,7 +46,7 @@ multica setup self-host
 Or step by step:
 
 ```bash
-# 1. Authenticate (opens browser for login)
+# 1. Authenticate via device flow (prints a code + browser link)
 multica login
 
 # 2. Start the agent daemon
@@ -59,13 +59,19 @@ multica daemon start
 
 ## Authentication
 
-### Browser Login
+### Browser Login (device flow)
 
 ```bash
 multica login
 ```
 
-Opens your browser for OAuth authentication, creates a 90-day personal access token, and auto-configures your workspaces.
+Uses the OAuth 2.0 Device Authorization Grant (RFC 8628). The CLI prints a short
+8-character code and a verification link like `https://multica.ai/cli/verify?code=ABCD-EFGH`.
+Open the link on any browser, sign in, and confirm the request. The CLI never
+binds to a local port, so this works the same whether the browser is on the same
+machine, a different host (e.g. SSH + remote browser), or a phone — you only need
+the code to match what the CLI displayed. A 90-day personal access token is
+created on approval and your workspaces are auto-configured.
 
 ### Token Login
 

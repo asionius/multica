@@ -137,7 +137,7 @@ The `multica` CLI connects your local machine to Multica — authenticate, manag
 
 | Command | Description |
 |---------|-------------|
-| `multica login` | Authenticate (opens browser) |
+| `multica login` | Authenticate via device flow (RFC 8628) — prints a short code and browser link |
 | `multica daemon start` | Start the local agent runtime |
 | `multica daemon status` | Check daemon status |
 | `multica setup` | One-command setup for Multica Cloud (configure + login + start daemon) |
