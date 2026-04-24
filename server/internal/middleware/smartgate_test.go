@@ -14,6 +14,7 @@ import (
 	jose "github.com/go-jose/go-jose/v3"
 
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/authtest"
 )
 
 const testSmartGateKey = "abcdefghijklmnopqrstuvwxyz012345" // 32 bytes
@@ -23,8 +24,8 @@ func setSmartGateEnvMW(t *testing.T, enabled bool, key string, safeMode bool) {
 	t.Setenv("SMARTGATE_ENABLED", strconv.FormatBool(enabled))
 	t.Setenv("SMARTGATE_KEY", key)
 	t.Setenv("SMARTGATE_SAFE_MODE", strconv.FormatBool(safeMode))
-	resetSmartGateAuthConfig()
-	t.Cleanup(resetSmartGateAuthConfig)
+	authtest.ResetSmartGateConfig()
+	t.Cleanup(authtest.ResetSmartGateConfig)
 }
 
 func encryptMW(t *testing.T, key []byte, payload map[string]any) string {

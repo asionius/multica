@@ -15,7 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	jose "github.com/go-jose/go-jose/v3"
 
-	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/authtest"
 	"github.com/multica-ai/multica/server/internal/middleware"
 )
 
@@ -31,8 +31,8 @@ func configureSmartGateEnv(t *testing.T, enabled bool) {
 	t.Setenv("SMARTGATE_ENABLED", strconv.FormatBool(enabled))
 	t.Setenv("SMARTGATE_KEY", smartGateTestKey)
 	t.Setenv("SMARTGATE_SAFE_MODE", "true")
-	auth.ResetSmartGateConfigForTests()
-	t.Cleanup(auth.ResetSmartGateConfigForTests)
+	authtest.ResetSmartGateConfig()
+	t.Cleanup(authtest.ResetSmartGateConfig)
 }
 
 // encryptSmartGateIdentity produces a SmartGate-compatible JWE compact
