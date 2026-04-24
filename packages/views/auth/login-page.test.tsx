@@ -47,13 +47,22 @@ vi.mock("@multica/core/auth", () => ({
   useAuthStore: Object.assign(
     // Zustand hook form — component may call useAuthStore(selector)
     (selector?: (s: unknown) => unknown) => {
-      const state = { sendCode: mockSendCode, verifyCode: mockVerifyCode };
+      const state = {
+        sendCode: mockSendCode,
+        verifyCode: mockVerifyCode,
+        smartGateLogin: vi.fn(),
+        user: null,
+        isLoading: false,
+      };
       return selector ? selector(state) : state;
     },
     {
       getState: () => ({
         sendCode: mockSendCode,
         verifyCode: mockVerifyCode,
+        smartGateLogin: vi.fn(),
+        user: null,
+        isLoading: false,
       }),
     },
   ),
@@ -66,7 +75,13 @@ vi.mock("@multica/core/api", () => ({
     setToken: mockApiSetToken,
     getMe: mockApiGetMe,
     issueCliToken: mockApiIssueCliToken,
+    getSmartGateConfig: vi.fn().mockResolvedValue({ enabled: false }),
+    smartGateLogin: vi.fn(),
   },
+}));
+
+vi.mock("@multica/core/workspace/queries", () => ({
+  workspaceKeys: { list: () => ["workspaces", "list"] },
 }));
 
 vi.mock("@multica/core/types", () => ({}));
@@ -99,6 +114,15 @@ describe("LoginPage", () => {
     // Default: no existing session (getMe rejects when no auth)
     mockApiGetMe.mockRejectedValue(new Error("unauthorized"));
     localStorage.clear();
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.clear();
+      // Pre-seed SmartGate disabled so the SSO useEffect exits
+      // synchronously. Without this, tests that don't explicitly waitFor a
+      // post-SSO state see act() warnings when setSmartGateState("done")
+      // resolves after the sync test body. Tests that exercise SSO itself
+      // can override this per-case.
+      sessionStorage.setItem("multica:smartgate_enabled", "0");
+    }
     // Reset window.location for tests that change it
     Object.defineProperty(window, "location", {
       writable: true,

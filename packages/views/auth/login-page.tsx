@@ -97,6 +97,33 @@ export function validateCliCallback(cliCallback: string): boolean {
 // Component
 // ---------------------------------------------------------------------------
 
+// SmartGate SSO config cache — keyed per tab to avoid a /smartgate-config
+// round-trip on every /login visit. The server already returns a tiny
+// JSON so we only cache the enabled flag, and only for the tab lifetime
+// so a deployment flip does not require a browser restart.
+const SMARTGATE_CONFIG_KEY = "multica:smartgate_enabled";
+
+function readCachedSmartGateConfig(): { enabled: boolean } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const v = window.sessionStorage.getItem(SMARTGATE_CONFIG_KEY);
+    if (v === "1") return { enabled: true };
+    if (v === "0") return { enabled: false };
+  } catch {
+    // sessionStorage may be blocked (privacy mode) — treat as cache miss.
+  }
+  return null;
+}
+
+function writeCachedSmartGateConfig(enabled: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(SMARTGATE_CONFIG_KEY, enabled ? "1" : "0");
+  } catch {
+    // Ignore — next visit will re-fetch.
+  }
+}
+
 export function LoginPage({
   logo,
   onSuccess,
@@ -108,6 +135,7 @@ export function LoginPage({
 }: LoginPageProps) {
   const { t } = useT("auth");
   const qc = useQueryClient();
+  const isLoading = useAuthStore((s) => s.isLoading);
   const [step, setStep] = useState<"email" | "code" | "cli_confirm">("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -115,38 +143,86 @@ export function LoginPage({
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [existingUser, setExistingUser] = useState<User | null>(null);
-  // SmartGate SSO runs once on mount. While "checking" we suppress the email
-  // form to avoid a flash before a potential silent redirect.
-  const [smartGateState, setSmartGateState] = useState<"checking" | "done">(
-    "checking",
+  // SmartGate SSO flow status. "idle" means the email form can render
+  // normally — we only flip to "checking" when we are actually about to
+  // perform a silent SSO (enabled=true AND user not yet authenticated),
+  // so OSS / disabled deployments see zero extra UI.
+  const [smartGateState, setSmartGateState] = useState<"idle" | "checking" | "done">(
+    "idle",
   );
   // Tracks how the existing session was detected so handleCliAuthorize
   // uses the matching token source (cookie → issueCliToken, localStorage → direct).
   const authSourceRef = useRef<"cookie" | "localStorage">("cookie");
 
-  // SmartGate SSO silent login. Runs once on mount before any other auth
-  // detection. If the corporate gateway is configured and the request
-  // carries gateway-injected identity headers, the server will issue a
-  // session cookie and we write the user into the auth store — downstream
-  // useEffects will then treat the visit as "already logged in".
+  // Seed the workspace list React Query cache after SSO so the outer
+  // LoginPageContent useEffect (which reads `workspaceKeys.list()` off the
+  // cache to decide between the first workspace and /workspaces/new) has
+  // real data — same contract as the email/code handleVerify path.
+  const primeWorkspaceCache = useCallback(async () => {
+    try {
+      const wsList = await api.listWorkspaces();
+      qc.setQueryData(workspaceKeys.list(), wsList);
+    } catch (err) {
+      // Non-fatal: the outer page will fall back to fetching the list
+      // itself. Keep SSO successful.
+      console.warn("Failed to prime workspace list cache after SSO", err);
+    }
+  }, [qc]);
+
+  // SmartGate SSO silent login.
+  //
+  // Gating rules:
+  //  - Wait for AuthInitializer (isLoading=false) before reading `user`,
+  //    otherwise a returning user with a valid cookie races the in-flight
+  //    getMe() and we fire a redundant smartgate-login.
+  //  - If a user is already in the auth store, the outer page handles the
+  //    redirect; we just return.
+  //  - Check sessionStorage before hitting /smartgate-config so disabled
+  //    deployments do not re-fetch on every /login visit.
+  //  - When disabled, go straight to "done" (render the email form) —
+  //    no loading UI, no extra request.
   useEffect(() => {
+    if (isLoading) return;
+    // Already signed in (cookie hit or store hydrated) — nothing to do.
+    if (useAuthStore.getState().user) {
+      setSmartGateState("done");
+      return;
+    }
+    const cached = readCachedSmartGateConfig();
+    if (cached && !cached.enabled) {
+      setSmartGateState("done");
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       try {
-        const cfg = await api.getSmartGateConfig();
-        if (cancelled) return;
-        if (!cfg.enabled) {
+        let enabled: boolean;
+        if (cached?.enabled) {
+          enabled = true;
+        } else {
+          const cfg = await api.getSmartGateConfig();
+          if (cancelled) return;
+          enabled = cfg.enabled;
+          writeCachedSmartGateConfig(enabled);
+        }
+        if (!enabled) {
           setSmartGateState("done");
           return;
         }
-        // Already logged in (e.g. store hydrated elsewhere) — don't re-SSO.
-        const existing = useAuthStore.getState().user;
-        if (existing) {
+        // Re-check user: AuthInitializer may have completed between the
+        // initial guard and here on slow networks.
+        if (useAuthStore.getState().user) {
           setSmartGateState("done");
           return;
         }
+        setSmartGateState("checking");
         try {
           await useAuthStore.getState().smartGateLogin();
+          if (cancelled) return;
+          // Prime the workspace cache so the outer page's user-redirect
+          // useEffect routes to the first workspace (not /workspaces/new).
+          await primeWorkspaceCache();
           // user is now in the store; outer page's useEffect handles redirect.
         } catch (err) {
           // 403 / network — silently fall through to email/code form.
@@ -164,13 +240,17 @@ export function LoginPage({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isLoading, primeWorkspaceCache]);
 
   // Check for existing session when CLI callback is present.
   // Prioritises cookie auth (= current browser session) to avoid authorising
   // the CLI with a stale or mismatched localStorage token.
+  //
+  // Gated on smartGateState === "done" so we only probe once, after the
+  // SSO flow has either succeeded (user is in store → outer page redirects
+  // and this component unmounts) or been skipped.
   useEffect(() => {
-    if (smartGateState === "checking") return;
+    if (smartGateState !== "done") return;
     if (!cliCallback) return;
 
     // Ensure no stale bearer token interferes — we want to test the cookie first.
