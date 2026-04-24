@@ -459,6 +459,17 @@ export class ApiClient {
     });
   }
 
+  async getSmartGateConfig(): Promise<{ enabled: boolean }> {
+    return this.fetch<{ enabled: boolean }>("/auth/smartgate-config");
+  }
+
+  async smartGateLogin(): Promise<LoginResponse> {
+    return this.fetch<LoginResponse>("/auth/smartgate-login", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
   async updateMe(data: UpdateMeRequest): Promise<User> {
     return this.fetch("/api/me", {
       method: "PATCH",

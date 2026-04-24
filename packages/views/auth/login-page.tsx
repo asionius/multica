@@ -115,14 +115,62 @@ export function LoginPage({
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [existingUser, setExistingUser] = useState<User | null>(null);
+  // SmartGate SSO runs once on mount. While "checking" we suppress the email
+  // form to avoid a flash before a potential silent redirect.
+  const [smartGateState, setSmartGateState] = useState<"checking" | "done">(
+    "checking",
+  );
   // Tracks how the existing session was detected so handleCliAuthorize
   // uses the matching token source (cookie → issueCliToken, localStorage → direct).
   const authSourceRef = useRef<"cookie" | "localStorage">("cookie");
+
+  // SmartGate SSO silent login. Runs once on mount before any other auth
+  // detection. If the corporate gateway is configured and the request
+  // carries gateway-injected identity headers, the server will issue a
+  // session cookie and we write the user into the auth store — downstream
+  // useEffects will then treat the visit as "already logged in".
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await api.getSmartGateConfig();
+        if (cancelled) return;
+        if (!cfg.enabled) {
+          setSmartGateState("done");
+          return;
+        }
+        // Already logged in (e.g. store hydrated elsewhere) — don't re-SSO.
+        const existing = useAuthStore.getState().user;
+        if (existing) {
+          setSmartGateState("done");
+          return;
+        }
+        try {
+          await useAuthStore.getState().smartGateLogin();
+          // user is now in the store; outer page's useEffect handles redirect.
+        } catch (err) {
+          // 403 / network — silently fall through to email/code form.
+          console.warn(
+            "SmartGate login failed, falling back to email/code",
+            err,
+          );
+        }
+      } catch (err) {
+        console.warn("SmartGate config check failed", err);
+      } finally {
+        if (!cancelled) setSmartGateState("done");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Check for existing session when CLI callback is present.
   // Prioritises cookie auth (= current browser session) to avoid authorising
   // the CLI with a stale or mismatched localStorage token.
   useEffect(() => {
+    if (smartGateState === "checking") return;
     if (!cliCallback) return;
 
     // Ensure no stale bearer token interferes — we want to test the cookie first.
@@ -153,7 +201,7 @@ export function LoginPage({
             localStorage.removeItem("multica_token");
           });
       });
-  }, [cliCallback]);
+  }, [cliCallback, smartGateState]);
 
   // Cooldown timer for resend
   useEffect(() => {
@@ -285,6 +333,22 @@ export function LoginPage({
     if (google.state) params.set("state", google.state);
     window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
   };
+
+  // -------------------------------------------------------------------------
+  // SmartGate SSO in progress — suppress the email form so it doesn't flash
+  // before a silent redirect lands.
+  // -------------------------------------------------------------------------
+
+  if (smartGateState === "checking") {
+    return (
+      <div className="flex min-h-svh items-center justify-center">
+        {/* TODO: i18n */}
+        <p className="text-sm text-muted-foreground">
+          Signing in via corporate SSO…
+        </p>
+      </div>
+    );
+  }
 
   // -------------------------------------------------------------------------
   // CLI confirm step
