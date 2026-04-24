@@ -253,6 +253,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Public API
 	r.Get("/api/config", h.GetConfig)
+
+	// SmartGate SSO (Tencent internal gateway). The config endpoint is
+	// public so the frontend can decide whether to try the silent login;
+	// the login endpoint itself is gated by the SmartGate middleware,
+	// which rejects requests lacking a valid x-tai-identity handshake.
+	r.Get("/auth/smartgate-config", h.SmartGateConfig)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.SmartGate(true))
+		r.Post("/auth/smartgate-login", h.SmartGateLogin)
+	})
+
+
 	// Public config — deployment metadata the CLI needs before it has a token
 	// (primarily the browser-facing app URL so it can compose the verify link).
 	r.Get("/api/public/config", h.GetPublicConfig)
