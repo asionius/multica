@@ -60,6 +60,14 @@ func SmartGateFromContext(ctx context.Context) (*auth.SmartGateIdentity, bool) {
 	return identity, ok
 }
 
+// withSmartGateIdentity is the inverse of SmartGateFromContext — it stores
+// the identity using the private context key so downstream code can look
+// it up. Kept unexported so it isn't used as a production API; tests in
+// other packages reach it via go:linkname.
+func withSmartGateIdentity(ctx context.Context, identity *auth.SmartGateIdentity) context.Context {
+	return context.WithValue(ctx, smartGateCtxKey{}, identity)
+}
+
 func writeSmartGateError(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)

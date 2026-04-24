@@ -10,6 +10,7 @@ package auth
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -48,18 +49,10 @@ var (
 
 // resetSmartGateConfigForTests clears the memoized config so tests can
 // change the underlying env vars between cases. Package-private and
-// intended only for use by smartgate_test.go.
+// intended only for use by smartgate_test.go / export_test.go.
 func resetSmartGateConfigForTests() {
 	smartGateCfgOnce = sync.Once{}
 	smartGateCfg = smartGateConfig{}
-}
-
-// ResetSmartGateConfigForTests is the exported twin of
-// resetSmartGateConfigForTests for tests in other packages (e.g. middleware
-// tests that need to flip SMARTGATE_ENABLED between cases). Not intended
-// for production use.
-func ResetSmartGateConfigForTests() {
-	resetSmartGateConfigForTests()
 }
 
 func loadSmartGateConfig() smartGateConfig {
@@ -193,7 +186,7 @@ func ParseSmartGateHeaders(headers http.Header) (*SmartGateIdentity, error) {
 }
 
 // verifySmartGateSignature rebuilds the SHA-256 digest SmartGate uses and
-// compares it (case-insensitive hex) with the supplied signature.
+// compares it against the supplied signature in constant time.
 //
 // safeMode=true:   extHeaders = [rioSeq, "", "", ""]
 // safeMode=false:  extHeaders = [rioSeq, staffID, staffName, extData]
@@ -212,9 +205,13 @@ func verifySmartGateSignature(timestamp, signature string, key []byte, rioSeq, s
 	sb.WriteString(timestamp)
 
 	sum := sha256.Sum256([]byte(sb.String()))
-	expected := hex.EncodeToString(sum[:])
+	expectedBytes := sum[:]
 
-	if !strings.EqualFold(expected, signature) {
+	sigBytes, err := hex.DecodeString(strings.TrimSpace(signature))
+	if err != nil || len(sigBytes) != sha256.Size {
+		return fmt.Errorf("smartgate: signature format invalid")
+	}
+	if subtle.ConstantTimeCompare(expectedBytes, sigBytes) != 1 {
 		return fmt.Errorf("smartgate: signature mismatch")
 	}
 	return nil

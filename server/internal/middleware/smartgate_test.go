@@ -23,8 +23,8 @@ func setSmartGateEnvMW(t *testing.T, enabled bool, key string, safeMode bool) {
 	t.Setenv("SMARTGATE_ENABLED", strconv.FormatBool(enabled))
 	t.Setenv("SMARTGATE_KEY", key)
 	t.Setenv("SMARTGATE_SAFE_MODE", strconv.FormatBool(safeMode))
-	auth.ResetSmartGateConfigForTests()
-	t.Cleanup(auth.ResetSmartGateConfigForTests)
+	resetSmartGateAuthConfig()
+	t.Cleanup(resetSmartGateAuthConfig)
 }
 
 func encryptMW(t *testing.T, key []byte, payload map[string]any) string {

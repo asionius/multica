@@ -145,17 +145,35 @@ func TestParseSmartGateHeaders_Success(t *testing.T) {
 }
 
 func TestParseSmartGateHeaders_SignatureMismatch(t *testing.T) {
-	setSmartGateEnv(t, true, testSmartGateKey, true)
-	headers := baseHeaders(t, []byte(testSmartGateKey), true, goodPayload(), 0)
-	headers.Set("signature", strings.Repeat("0", 64))
+	t.Run("valid hex but wrong bytes", func(t *testing.T) {
+		setSmartGateEnv(t, true, testSmartGateKey, true)
+		headers := baseHeaders(t, []byte(testSmartGateKey), true, goodPayload(), 0)
+		// 64 hex chars → decodes to 32 bytes of zeros → mismatch path.
+		headers.Set("signature", strings.Repeat("0", 64))
 
-	_, err := ParseSmartGateHeaders(headers)
-	if err == nil {
-		t.Fatalf("expected signature mismatch error")
-	}
-	if !strings.Contains(err.Error(), "signature mismatch") {
-		t.Fatalf("expected signature mismatch, got %v", err)
-	}
+		_, err := ParseSmartGateHeaders(headers)
+		if err == nil {
+			t.Fatalf("expected signature mismatch error")
+		}
+		if !strings.Contains(err.Error(), "signature mismatch") {
+			t.Fatalf("expected signature mismatch, got %v", err)
+		}
+	})
+
+	t.Run("not hex", func(t *testing.T) {
+		setSmartGateEnv(t, true, testSmartGateKey, true)
+		headers := baseHeaders(t, []byte(testSmartGateKey), true, goodPayload(), 0)
+		// "not-hex!" can't be decoded → format invalid path.
+		headers.Set("signature", "not-hex!")
+
+		_, err := ParseSmartGateHeaders(headers)
+		if err == nil {
+			t.Fatalf("expected signature format error")
+		}
+		if !strings.Contains(err.Error(), "signature format invalid") {
+			t.Fatalf("expected signature format invalid, got %v", err)
+		}
+	})
 }
 
 func TestParseSmartGateHeaders_TimestampOutOfWindow_SafeMode(t *testing.T) {
