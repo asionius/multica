@@ -1,8 +1,10 @@
 import { create } from "zustand";
+import type { QueryClient } from "@tanstack/react-query";
 import type { User, StorageAdapter } from "../types";
 import { identify as identifyAnalytics, resetAnalytics } from "../analytics";
 import { ApiError, type ApiClient } from "../api/client";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
+import { workspaceKeys } from "../workspace/queries";
 
 export interface AuthStoreOptions {
   api: ApiClient;
@@ -11,6 +13,16 @@ export interface AuthStoreOptions {
   onLogout?: () => void;
   /** When true, rely on HttpOnly cookies instead of localStorage for auth tokens. */
   cookieAuth?: boolean;
+  /**
+   * Late-bound accessor to the React Query client. Auth actions use this to
+   * seed the workspace list cache *before* setting `user`, so any subscriber
+   * that reacts to the user transition (e.g. the /login page's redirect
+   * effect) observes a populated cache and routes to the first workspace
+   * instead of /workspaces/new. Returns null before the QueryProvider
+   * registers the client, in which case the cache prefill is skipped (the
+   * outer page will fall back to fetching the list itself).
+   */
+  getQueryClient?: () => QueryClient | null;
 }
 
 export interface AuthState {
@@ -29,7 +41,24 @@ export interface AuthState {
 }
 
 export function createAuthStore(options: AuthStoreOptions) {
-  const { api, storage, onLogin, onLogout, cookieAuth } = options;
+  const { api, storage, onLogin, onLogout, cookieAuth, getQueryClient } = options;
+
+  // Fetch the workspace list and seed the React Query cache. Runs before
+  // `set({ user })` on every login path so subscribers to the user
+  // transition see a populated cache and can route correctly. Failures are
+  // swallowed — the outer page will fall back to fetching the list itself,
+  // and we never want a workspace-list error to block login itself.
+  const prefillWorkspaceCache = async () => {
+    const qc = getQueryClient?.();
+    if (!qc) return;
+    try {
+      const wsList = await api.listWorkspaces();
+      qc.setQueryData(workspaceKeys.list(), wsList);
+    } catch (err) {
+      // Non-fatal: leave the cache untouched; outer page recovers.
+      console.warn("auth: failed to prefill workspace list cache", err);
+    }
+  };
 
   return create<AuthState>((set) => ({
     user: null,
@@ -86,6 +115,9 @@ export function createAuthStore(options: AuthStoreOptions) {
         storage.setItem("multica_token", token);
         api.setToken(token);
       }
+      // Prefill workspace cache *before* notifying user subscribers.
+      // See prefillWorkspaceCache docstring for why.
+      await prefillWorkspaceCache();
       onLogin?.();
       identifyAnalytics(user.id, { email: user.email, name: user.name });
       set({ user });
@@ -98,6 +130,7 @@ export function createAuthStore(options: AuthStoreOptions) {
         storage.setItem("multica_token", token);
         api.setToken(token);
       }
+      await prefillWorkspaceCache();
       onLogin?.();
       set({ user });
       return user;
@@ -109,6 +142,7 @@ export function createAuthStore(options: AuthStoreOptions) {
         storage.setItem("multica_token", token);
         api.setToken(token);
       }
+      await prefillWorkspaceCache();
       onLogin?.();
       identifyAnalytics(user.id, { email: user.email, name: user.name });
       set({ user });
@@ -119,6 +153,7 @@ export function createAuthStore(options: AuthStoreOptions) {
       storage.setItem("multica_token", token);
       api.setToken(token);
       const user = await api.getMe();
+      await prefillWorkspaceCache();
       onLogin?.();
       identifyAnalytics(user.id, { email: user.email, name: user.name });
       set({ user, isLoading: false });

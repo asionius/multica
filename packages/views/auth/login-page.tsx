@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardHeader,
@@ -19,7 +18,6 @@ import {
   InputOTPSlot,
 } from "@multica/ui/components/ui/input-otp";
 import { useAuthStore } from "@multica/core/auth";
-import { workspaceKeys } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
 import type { User } from "@multica/core/types";
 import { useT } from "../i18n";
@@ -154,21 +152,6 @@ export function LoginPage({
   // uses the matching token source (cookie → issueCliToken, localStorage → direct).
   const authSourceRef = useRef<"cookie" | "localStorage">("cookie");
 
-  // Seed the workspace list React Query cache after SSO so the outer
-  // LoginPageContent useEffect (which reads `workspaceKeys.list()` off the
-  // cache to decide between the first workspace and /workspaces/new) has
-  // real data — same contract as the email/code handleVerify path.
-  const primeWorkspaceCache = useCallback(async () => {
-    try {
-      const wsList = await api.listWorkspaces();
-      qc.setQueryData(workspaceKeys.list(), wsList);
-    } catch (err) {
-      // Non-fatal: the outer page will fall back to fetching the list
-      // itself. Keep SSO successful.
-      console.warn("Failed to prime workspace list cache after SSO", err);
-    }
-  }, [qc]);
-
   // SmartGate SSO silent login.
   //
   // Gating rules:
@@ -181,6 +164,11 @@ export function LoginPage({
   //    deployments do not re-fetch on every /login visit.
   //  - When disabled, go straight to "done" (render the email form) —
   //    no loading UI, no extra request.
+  //
+  // The workspace-list cache is seeded *inside* the store's smartGateLogin
+  // action (before set({ user })), so the outer LoginPageContent redirect
+  // useEffect always sees a populated cache on user transition and never
+  // falls back to /workspaces/new. See packages/core/auth/store.ts.
   useEffect(() => {
     if (isLoading) return;
     // Already signed in (cookie hit or store hydrated) — nothing to do.
@@ -220,9 +208,6 @@ export function LoginPage({
         try {
           await useAuthStore.getState().smartGateLogin();
           if (cancelled) return;
-          // Prime the workspace cache so the outer page's user-redirect
-          // useEffect routes to the first workspace (not /workspaces/new).
-          await primeWorkspaceCache();
           // user is now in the store; outer page's useEffect handles redirect.
         } catch (err) {
           // 403 / network — silently fall through to email/code form.
@@ -240,7 +225,7 @@ export function LoginPage({
     return () => {
       cancelled = true;
     };
-  }, [isLoading, primeWorkspaceCache]);
+  }, [isLoading]);
 
   // Check for existing session when CLI callback is present.
   // Prioritises cookie auth (= current browser session) to avoid authorising
@@ -333,13 +318,12 @@ export function LoginPage({
           return;
         }
 
-        // Normal path: seed the workspace list into the Query cache so the
-        // caller's onSuccess can read it synchronously to compute a destination
-        // URL (first workspace's slug, or /workspaces/new for zero-workspace
-        // users).
+        // Normal path: the store's verifyCode action seeds the workspace
+        // list cache *before* setting `user`, so by the time onSuccess
+        // fires both the cache and the user state are consistent and the
+        // caller can peek at the cache synchronously to compute a
+        // destination URL.
         await useAuthStore.getState().verifyCode(email, value);
-        const wsList = await api.listWorkspaces();
-        qc.setQueryData(workspaceKeys.list(), wsList);
         onTokenObtained?.();
         onSuccess();
       } catch (err) {

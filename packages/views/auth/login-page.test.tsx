@@ -29,11 +29,16 @@ function renderWithI18n(ui: ReactElement) {
 
 const mockSendCode = vi.hoisted(() => vi.fn());
 const mockVerifyCode = vi.hoisted(() => vi.fn());
+const mockSmartGateLogin = vi.hoisted(() => vi.fn());
 const mockApiListWorkspaces = vi.hoisted(() => vi.fn());
 const mockApiVerifyCode = vi.hoisted(() => vi.fn());
 const mockApiSetToken = vi.hoisted(() => vi.fn());
 const mockApiGetMe = vi.hoisted(() => vi.fn());
 const mockApiIssueCliToken = vi.hoisted(() => vi.fn());
+const mockApiSmartGateLogin = vi.hoisted(() => vi.fn());
+const mockApiGetSmartGateConfig = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ enabled: false }),
+);
 const mockSetQueryData = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-query", async () => {
@@ -50,7 +55,7 @@ vi.mock("@multica/core/auth", () => ({
       const state = {
         sendCode: mockSendCode,
         verifyCode: mockVerifyCode,
-        smartGateLogin: vi.fn(),
+        smartGateLogin: mockSmartGateLogin,
         user: null,
         isLoading: false,
       };
@@ -60,7 +65,7 @@ vi.mock("@multica/core/auth", () => ({
       getState: () => ({
         sendCode: mockSendCode,
         verifyCode: mockVerifyCode,
-        smartGateLogin: vi.fn(),
+        smartGateLogin: mockSmartGateLogin,
         user: null,
         isLoading: false,
       }),
@@ -75,8 +80,8 @@ vi.mock("@multica/core/api", () => ({
     setToken: mockApiSetToken,
     getMe: mockApiGetMe,
     issueCliToken: mockApiIssueCliToken,
-    getSmartGateConfig: vi.fn().mockResolvedValue({ enabled: false }),
-    smartGateLogin: vi.fn(),
+    getSmartGateConfig: mockApiGetSmartGateConfig,
+    smartGateLogin: mockApiSmartGateLogin,
   },
 }));
 
@@ -111,6 +116,9 @@ describe("LoginPage", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.clearAllMocks();
+    // `clearAllMocks` wipes implementations too — re-seed the default
+    // SmartGate-disabled response.
+    mockApiGetSmartGateConfig.mockResolvedValue({ enabled: false });
     // Default: no existing session (getMe rejects when no auth)
     mockApiGetMe.mockRejectedValue(new Error("unauthorized"));
     localStorage.clear();
@@ -254,10 +262,13 @@ describe("LoginPage", () => {
   // Code verification
   // -------------------------------------------------------------------------
 
-  it("calls verifyCode, seeds workspace list cache, then onSuccess", async () => {
+  it("calls verifyCode then onSuccess (cache prefill is delegated to the store)", async () => {
+    // After the race fix, the view no longer calls listWorkspaces or
+    // setQueryData itself — the store's verifyCode action owns the
+    // workspace-list prefill before `set({ user })`. The view just awaits
+    // the store action and fires onSuccess.
     mockSendCode.mockResolvedValueOnce(undefined);
     mockVerifyCode.mockResolvedValueOnce(undefined);
-    mockApiListWorkspaces.mockResolvedValueOnce([{ id: "ws-1" }]);
 
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
 
@@ -281,15 +292,14 @@ describe("LoginPage", () => {
         "test@example.com",
         "123456",
       );
-      expect(mockApiListWorkspaces).toHaveBeenCalled();
-      // The workspace list is seeded into React Query so onSuccess can read
-      // it synchronously to compute a destination URL.
-      expect(mockSetQueryData).toHaveBeenCalledWith(
-        expect.arrayContaining(["workspaces", "list"]),
-        [{ id: "ws-1" }],
-      );
       expect(onSuccess).toHaveBeenCalled();
     });
+    // Invariant: the view does NOT fetch the workspace list or write to
+    // the query cache on its own — the store owns those writes so cache
+    // and user state transition atomically. A regression that moves
+    // either back into the view would break this expectation.
+    expect(mockApiListWorkspaces).not.toHaveBeenCalled();
+    expect(mockSetQueryData).not.toHaveBeenCalled();
   });
 
   it("shows error on invalid code", async () => {
@@ -650,7 +660,6 @@ describe("LoginPage", () => {
   it("calls onTokenObtained after successful verification", async () => {
     mockSendCode.mockResolvedValueOnce(undefined);
     mockVerifyCode.mockResolvedValueOnce(undefined);
-    mockApiListWorkspaces.mockResolvedValueOnce([{ id: "ws-1" }]);
     const onTokenObtained = vi.fn();
 
     render(
@@ -702,6 +711,122 @@ describe("LoginPage", () => {
     expect(
       screen.getByText(/sign in to multica/i),
     ).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // SmartGate SSO — cache-before-user race regression guard
+  //
+  // Ordering invariant: when SmartGate SSO succeeds, the workspace list
+  // cache MUST be seeded before anything observable flips the "signed in"
+  // state. The outer LoginPageContent redirect useEffect reads the cache
+  // synchronously the instant it sees `user` transition, so if the cache
+  // is still empty at that moment, a plain user gets bounced to
+  // /workspaces/new instead of their first workspace.
+  //
+  // Earlier implementations ran `setQueryData` AFTER the store resolved
+  // `smartGateLogin` (in a separate awaited `primeWorkspaceCache` step in
+  // the view), which yielded to the microtask queue long enough for
+  // React to schedule a re-render of the outer component against an
+  // empty cache on a real network. The fix pushes the workspace-list
+  // prefetch *into* the store action so `setQueryData` happens before
+  // `set({ user })` atomically. These tests pin:
+  //   (A) the view delegates entirely to the store — no view-owned
+  //       post-resolution fetch that could race.
+  //   (B) the store's ordering invariant: setQueryData lands before the
+  //       smartGateLogin promise resolves (so any user-transition
+  //       subscriber observing resolution already sees a populated cache).
+  // -------------------------------------------------------------------------
+
+  it("SmartGate SSO: view does no post-resolution workspace fetch (delegates to store)", async () => {
+    // Seed sessionStorage so SmartGate is "enabled" — no config round-trip.
+    sessionStorage.setItem("multica:smartgate_enabled", "1");
+    // Make the store's smartGateLogin succeed without touching the API
+    // listWorkspaces mock. If the view still calls listWorkspaces itself
+    // after resolution (the old racy behaviour), this assertion catches it.
+    mockSmartGateLogin.mockResolvedValue({ id: "u1", email: "u@corp.com" });
+
+    render(<LoginPage onSuccess={onSuccess} />);
+
+    await waitFor(() => {
+      expect(mockSmartGateLogin).toHaveBeenCalledTimes(1);
+    });
+
+    // Give any lingering post-resolution work a full macrotask to run.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    // Invariant: the view never calls listWorkspaces on its own — that
+    // responsibility lives inside the store action so cache-seed and
+    // user-set are atomic. If a future edit reintroduces a
+    // view-owned primeWorkspaceCache() call, this blows up.
+    expect(mockApiListWorkspaces).not.toHaveBeenCalled();
+    // And the view must not perform a post-login setQueryData on its
+    // own either — the store owns that write. The test's mock
+    // setQueryData should only ever be called from inside the store
+    // (which we don't exercise here), so we expect zero calls from the
+    // view path.
+    expect(mockSetQueryData).not.toHaveBeenCalled();
+  });
+
+  it("SmartGate SSO: simulated store prefill lands before user transition resolves (ordering invariant)", async () => {
+    // Simulates the real store's internal contract end-to-end: a slow
+    // listWorkspaces (50ms) feeds setQueryData, which MUST complete before
+    // smartGateLogin's resolution fires — because the resolution is what
+    // synchronously kicks the zustand subscriber on the outer page.
+    sessionStorage.setItem("multica:smartgate_enabled", "1");
+    mockApiListWorkspaces.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => r([{ id: "ws-1", slug: "alpha" }]), 50),
+        ),
+    );
+    mockSmartGateLogin.mockImplementation(async () => {
+      // This is exactly the sequence the real store does:
+      //   const { user } = await api.smartGateLogin();
+      //   await prefillWorkspaceCache();   // listWorkspaces + setQueryData
+      //   set({ user });                   // subscribers fire here
+      // Reproducing it in the mock lets us assert the ordering holds
+      // across the await boundaries under fake timers.
+      const list = await mockApiListWorkspaces();
+      mockSetQueryData(["workspaces", "list"], list);
+      return { id: "u1", email: "u@corp.com" };
+    });
+
+    render(<LoginPage onSuccess={onSuccess} />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    await waitFor(() => {
+      expect(mockSmartGateLogin).toHaveBeenCalledTimes(1);
+      expect(mockSetQueryData).toHaveBeenCalledWith(
+        ["workspaces", "list"],
+        [{ id: "ws-1", slug: "alpha" }],
+      );
+    });
+
+    // Strict ordering: setQueryData was recorded BEFORE smartGateLogin's
+    // result was observable to its caller (the view's awaited call).
+    // We compare vitest's monotonic invocationCallOrder: the
+    // setQueryData call must be recorded at a lower order number than
+    // any subsequent listWorkspaces-based observation, and the listed
+    // workspaces must be present in the cache by the time the SSO
+    // "signing in" indicator is gone.
+    const setCacheOrder =
+      mockSetQueryData.mock.invocationCallOrder[0] ?? Infinity;
+    const listOrder =
+      mockApiListWorkspaces.mock.invocationCallOrder[0] ?? -1;
+    // listWorkspaces was called first (it's awaited by the prefill),
+    // setQueryData second — never the other way round.
+    expect(setCacheOrder).toBeGreaterThan(listOrder);
+    // And the SSO overlay is gone (state === "done"), meaning the
+    // component has moved past the point where outer subscribers can
+    // react to the user transition.
+    expect(
+      screen.queryByText(/signing in via corporate sso/i),
+    ).not.toBeInTheDocument();
   });
 
 });

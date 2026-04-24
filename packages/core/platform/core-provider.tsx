@@ -11,7 +11,7 @@ import {
   UserLocaleSync,
 } from "../i18n/react";
 import { WSProvider } from "../realtime";
-import { QueryProvider } from "../provider";
+import { QueryProvider, getRegisteredQueryClient } from "../provider";
 import { createLogger } from "../logger";
 import { defaultStorage } from "./storage";
 import { AuthInitializer } from "./auth-initializer";
@@ -53,7 +53,17 @@ function initCore(
   // client reads the slug from that singleton for the X-Workspace-Slug
   // header. No boot-time hydration from storage is required.
 
-  authStore = createAuthStore({ api, storage, onLogin, onLogout, cookieAuth });
+  authStore = createAuthStore({
+    api,
+    storage,
+    onLogin,
+    onLogout,
+    cookieAuth,
+    // Late-bound getter: QueryProvider registers its client on first
+    // render, which runs after initCore but before any user action that
+    // would call into smartGateLogin/verifyCode.
+    getQueryClient: () => getRegisteredQueryClient(),
+  });
   registerAuthStore(authStore);
 
   chatStore = createChatStore({ storage });
