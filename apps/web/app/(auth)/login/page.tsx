@@ -73,6 +73,11 @@ function LoginPageContent() {
   // the user's workspace list. Sanitize first so a crafted `?next=https://evil`
   // cannot bounce the user off-origin after a successful login.
   const nextUrl = sanitizeNextUrl(searchParams.get("next"));
+  // `from=landing` signals the user clicked an entry on the landing page
+  // that expects corporate SSO. When set, LoginPage renders the SSO loading
+  // screen on first paint instead of flashing the email form before the
+  // silent SmartGate check resolves.
+  const expectSso = searchParams.get("from") === "landing";
 
   const [desktopToken, setDesktopToken] = useState<string | null>(null);
   const [desktopError, setDesktopError] = useState("");
@@ -188,6 +193,7 @@ function LoginPageContent() {
   return (
     <LoginPage
       onSuccess={handleSuccess}
+      expectSso={expectSso}
       google={
         googleClientId
           ? {

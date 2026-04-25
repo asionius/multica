@@ -59,6 +59,13 @@ interface LoginPageProps {
    *  app?" prompt; desktop omits it (a download prompt inside the app
    *  would be absurd). */
   extra?: ReactNode;
+  /** Hint that the visitor is coming from a flow that expects SmartGate SSO
+   *  (e.g. the landing page's "Enter workspace" button on an SSO deployment).
+   *  When true, the initial render skips the email form and shows the
+   *  SSO loading screen until the SmartGate check resolves — avoiding the
+   *  "email form flashes then disappears" jank. Falls back to the email
+   *  form if SmartGate turns out to be disabled or the silent login fails. */
+  expectSso?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +137,7 @@ export function LoginPage({
   onTokenObtained,
   onGoogleLogin,
   extra,
+  expectSso = false,
 }: LoginPageProps) {
   const { t } = useT("auth");
   const qc = useQueryClient();
@@ -145,9 +153,14 @@ export function LoginPage({
   // normally — we only flip to "checking" when we are actually about to
   // perform a silent SSO (enabled=true AND user not yet authenticated),
   // so OSS / disabled deployments see zero extra UI.
-  const [smartGateState, setSmartGateState] = useState<"idle" | "checking" | "done">(
-    "idle",
-  );
+  //
+  // When `expectSso` is set, start in "checking" so the first paint is the
+  // SSO loading screen; the effect below will either complete the SSO flow
+  // or drop back to "idle" on a hard miss (disabled / 403 / network), at
+  // which point the email form appears.
+  const [smartGateState, setSmartGateState] = useState<
+    "idle" | "checking" | "done"
+  >(expectSso ? "checking" : "idle");
   // Tracks how the existing session was detected so handleCliAuthorize
   // uses the matching token source (cookie → issueCliToken, localStorage → direct).
   const authSourceRef = useRef<"cookie" | "localStorage">("cookie");
