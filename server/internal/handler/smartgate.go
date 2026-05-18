@@ -39,14 +39,11 @@ func (h *Handler) SmartGateLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.ToLower(loginName) + "@tencent.com"
 
-	user, isNew, err := h.findOrCreateUser(r.Context(), email)
+	user, _, err := h.findOrCreateUser(r.Context(), email)
 	if err != nil {
 		slog.Error("smartgate: findOrCreateUser failed", "error", err, "email", email)
 		writeError(w, http.StatusInternalServerError, "failed to create user")
 		return
-	}
-	if isNew {
-		h.maybeForkDemoWorkspace(user)
 	}
 
 	tokenString, err := h.issueJWT(user)

@@ -140,7 +140,6 @@ export function LoginPage({
   expectSso = false,
 }: LoginPageProps) {
   const { t } = useT("auth");
-  const qc = useQueryClient();
   const isLoading = useAuthStore((s) => s.isLoading);
   const [step, setStep] = useState<"email" | "code" | "cli_confirm">("email");
   const [email, setEmail] = useState("");
@@ -349,7 +348,7 @@ export function LoginPage({
         setLoading(false);
       }
     },
-    [email, onSuccess, cliCallback, onTokenObtained, qc, t],
+    [email, onSuccess, cliCallback, onTokenObtained, t],
   );
 
   const handleResend = async () => {
