@@ -62,6 +62,22 @@ func isSecureCookie() bool {
 	return strings.EqualFold(u.Scheme, "https")
 }
 
+// sessionSameSite picks the SameSite mode for auth and CSRF cookies.
+// Production (HTTPS): SameSiteNone, required so the SmartGate SSO redirect
+// from the gateway origin back to the app keeps the session cookies — None
+// must travel with Secure, which is true on HTTPS.
+// Dev (HTTP, e.g. local make dev / LAN deployments): SameSiteLax. Browsers
+// reject `SameSite=None` cookies on insecure origins (Chrome rejects them
+// outright; Firefox keeps them for the page but strips them from subsequent
+// requests), so we'd lose login + CSRF on HTTP. Lax is functionally
+// equivalent for first-party flows, and SmartGate is HTTPS-only anyway.
+func sessionSameSite() http.SameSite {
+	if isSecureCookie() {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteLaxMode
+}
+
 // generateCSRFToken creates a CSRF token bound to the auth token via HMAC.
 // Format: hex(nonce) + "." + hex(HMAC-SHA256(nonce, authToken)).
 // This ensures an attacker who can write cookies on a subdomain cannot forge
@@ -94,7 +110,7 @@ func SetAuthCookies(w http.ResponseWriter, token string) error {
 		Expires:  time.Now().Add(30 * 24 * time.Hour),
 		HttpOnly: true,
 		Secure:   secure,
-		SameSite: http.SameSiteNoneMode,
+		SameSite: sessionSameSite(),
 	})
 
 	csrfToken, err := generateCSRFToken(token)
@@ -111,7 +127,7 @@ func SetAuthCookies(w http.ResponseWriter, token string) error {
 		Expires:  time.Now().Add(30 * 24 * time.Hour),
 		HttpOnly: false,
 		Secure:   secure,
-		SameSite: http.SameSiteNoneMode,
+		SameSite: sessionSameSite(),
 	})
 
 	return nil
@@ -131,7 +147,7 @@ func ClearAuthCookies(w http.ResponseWriter) {
 		Expires:  time.Unix(0, 0),
 		HttpOnly: true,
 		Secure:   secure,
-		SameSite: http.SameSiteNoneMode,
+		SameSite: sessionSameSite(),
 	})
 
 	http.SetCookie(w, &http.Cookie{
@@ -143,7 +159,7 @@ func ClearAuthCookies(w http.ResponseWriter) {
 		Expires:  time.Unix(0, 0),
 		HttpOnly: false,
 		Secure:   secure,
-		SameSite: http.SameSiteNoneMode,
+		SameSite: sessionSameSite(),
 	})
 }
 
