@@ -112,6 +112,27 @@ function CursorLogo({ className }: { className: string }) {
   );
 }
 
+// CodeBuddy — placeholder "CB" monogram (Tencent brand blue). Swap in the
+// official mark later once available.
+function CodeBuddyLogo({ className }: { className: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className}>
+      <rect width="24" height="24" rx="5" fill="#0052D9" />
+      <text
+        x="12"
+        y="16"
+        textAnchor="middle"
+        fontFamily="ui-sans-serif, system-ui, sans-serif"
+        fontSize="10"
+        fontWeight="700"
+        fill="#FFFFFF"
+      >
+        CB
+      </text>
+    </svg>
+  );
+}
+
 // Kimi (Moonshot AI) — wordmark "K" mark in Moonshot brand purple, simple
 // rounded-square logotype suitable for small icon sizes.
 function KimiLogo({ className }: { className: string }) {
@@ -193,6 +214,8 @@ export function ProviderLogo({
       return <KimiLogo className={className} />;
     case "kiro":
       return <KiroLogo className={className} />;
+    case "codebuddy":
+      return <CodeBuddyLogo className={className} />;
     default:
       return <Monitor className={className} />;
   }
