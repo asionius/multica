@@ -96,10 +96,15 @@ type SmartGateIdentity struct {
 
 // identityPayload is the raw shape used for JSON decoding before we
 // normalize the Expiration field.
+//
+// StaffId comes back as a JSON number from real SmartGate gateways
+// (e.g. 12345) but some downstream tooling sends it quoted ("12345").
+// json.Number accepts both shapes; we coerce to string for the rest of
+// the pipeline.
 type identityPayload struct {
-	StaffID    string `json:"StaffId"`
-	LoginName  string `json:"LoginName"`
-	Expiration string `json:"Expiration"`
+	StaffID    json.Number `json:"StaffId"`
+	LoginName  string      `json:"LoginName"`
+	Expiration string      `json:"Expiration"`
 }
 
 // ParseSmartGateHeaders performs the full SmartGate handshake: signature
@@ -178,7 +183,7 @@ func ParseSmartGateHeaders(headers http.Header) (*SmartGateIdentity, error) {
 	}
 
 	return &SmartGateIdentity{
-		StaffID:       payload.StaffID,
+		StaffID:       payload.StaffID.String(),
 		LoginName:     payload.LoginName,
 		Expiration:    exp,
 		rawExpiration: payload.Expiration,
@@ -232,7 +237,7 @@ func decryptSmartGateIdentity(compact string, key []byte) (*identityPayload, err
 	if err := json.Unmarshal(raw, payload); err != nil {
 		return nil, fmt.Errorf("smartgate: parse identity payload: %w", err)
 	}
-	if payload.LoginName == "" || payload.StaffID == "" {
+	if payload.LoginName == "" || payload.StaffID.String() == "" {
 		return nil, fmt.Errorf("smartgate: identity payload missing StaffId/LoginName")
 	}
 	return payload, nil

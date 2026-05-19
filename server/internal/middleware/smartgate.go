@@ -3,7 +3,9 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/multica-ai/multica/server/internal/auth"
 )
@@ -36,7 +38,25 @@ func SmartGate(required bool) func(http.Handler) http.Handler {
 
 			identity, err := auth.ParseSmartGateHeaders(r.Header)
 			if err != nil {
+				// Debug: log all incoming headers (lower-cased) to confirm which
+				// SmartGate fields the upstream gateway is actually injecting.
+				// Only logs when middleware is required (i.e. on /auth/smartgate-login).
 				if required {
+					presentHeaders := []string{}
+					for k := range r.Header {
+						presentHeaders = append(presentHeaders, strings.ToLower(k))
+					}
+					slog.Warn("smartgate: handshake failed",
+						"path", r.URL.Path,
+						"reason", err.Error(),
+						"present_headers", strings.Join(presentHeaders, ","),
+						"x_tai_identity_len", len(r.Header.Get("x-tai-identity")),
+						"timestamp", r.Header.Get("timestamp"),
+						"signature_len", len(r.Header.Get("signature")),
+						"x_rio_seq", r.Header.Get("x-rio-seq"),
+						"staffid", r.Header.Get("staffid"),
+						"staffname", r.Header.Get("staffname"),
+					)
 					writeSmartGateError(w, err.Error())
 					return
 				}
