@@ -224,6 +224,17 @@ var issueSearchCmd = &cobra.Command{
 	RunE:  runIssueSearch,
 }
 
+var issueUsageCmd = &cobra.Command{
+	Use:   "usage <id>",
+	Short: "Get aggregated token usage across all task runs for an issue",
+	Long: "Sum input/output/cache tokens across every task this issue's agents have run. " +
+		"Backed by GET /api/issues/{id}/usage which JOIN-aggregates the raw task_usage " +
+		"table by issue_id; cost is constant in days but linear in the issue's task count " +
+		"(usually small).",
+	Args: exactArgs(1),
+	RunE: runIssueUsage,
+}
+
 var validIssueStatuses = []string{
 	"backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled",
 }
@@ -242,6 +253,7 @@ func init() {
 	issueCmd.AddCommand(issueRerunCmd)
 	issueCmd.AddCommand(issueCancelTaskCmd)
 	issueCmd.AddCommand(issueSearchCmd)
+	issueCmd.AddCommand(issueUsageCmd)
 
 	issueCommentCmd.AddCommand(issueCommentListCmd)
 	issueCommentCmd.AddCommand(issueCommentAddCmd)
@@ -264,6 +276,9 @@ func init() {
 
 	// issue get
 	issueGetCmd.Flags().String("output", "json", "Output format: table or json")
+
+	// issue usage
+	issueUsageCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// issue create
 	issueCreateCmd.Flags().String("title", "", "Issue title (required)")
@@ -1785,4 +1800,56 @@ func truncateID(id string) string {
 		return string(runes[:8])
 	}
 	return id
+}
+
+func runIssueUsage(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Resolve identifier ("CC-42") or UUID → UUID. The server route also
+	// accepts identifiers (loadIssueForUser handles both), but we resolve
+	// here for a cleaner error message when the issue doesn't exist.
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+
+	var usage map[string]any
+	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/usage", &usage); err != nil {
+		return fmt.Errorf("get issue usage: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, usage)
+	}
+
+	// JSON numbers decode into float64; %v on float64 falls back to %g
+	// which switches to scientific notation around 1e7. Format token
+	// counts as plain integers so the table stays readable.
+	fmtN := func(v any) string {
+		if v == nil {
+			return "0"
+		}
+		if f, ok := v.(float64); ok {
+			return fmt.Sprintf("%.0f", f)
+		}
+		return fmt.Sprintf("%v", v)
+	}
+
+	headers := []string{"INPUT", "OUTPUT", "CACHE_READ", "CACHE_WRITE", "TASKS"}
+	rows := [][]string{{
+		fmtN(usage["total_input_tokens"]),
+		fmtN(usage["total_output_tokens"]),
+		fmtN(usage["total_cache_read_tokens"]),
+		fmtN(usage["total_cache_write_tokens"]),
+		fmtN(usage["task_count"]),
+	}}
+	cli.PrintTable(os.Stdout, headers, rows)
+	return nil
 }
