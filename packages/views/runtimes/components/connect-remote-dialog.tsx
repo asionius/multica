@@ -116,10 +116,10 @@ export function ConnectRemoteDialog({ onClose }: { onClose: () => void }) {
 // Step 1: Installation instructions
 // ---------------------------------------------------------------------------
 
-const INSTALL_CMD = "curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash";
+const INSTALL_CMD = "curl -fsSL https://raw.githubusercontent.com/asionius/multica/main/scripts/install.sh | bash";
 
-const CONFIGURE_CMD = `multica config set server_url https://api.multica.ai
-multica config set app_url https://multica.ai`;
+const CONFIGURE_CMD = `multica config set server_url http://server.tmultica.woa.com:8080
+multica config set app_url http://tmultica.woa.com`;
 
 const LOGIN_CMD = "multica login --token <YOUR_TOKEN>";
 
@@ -205,6 +205,9 @@ function InstructionsStep({
               copied={copied}
               onCopy={onCopy}
             />
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              在办公网内可省略 :8080 端口,直接使用 http://server.tmultica.woa.com。
+            </p>
           </div>
 
           <div>
