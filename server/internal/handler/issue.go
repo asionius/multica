@@ -2148,10 +2148,17 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Trigger the assigned agent when a member moves an issue out of backlog.
-	// Backlog acts as a parking lot — moving to an active status signals the
-	// issue is ready for work.
-	if statusChanged && !assigneeChanged && actorType == "member" &&
+	// Trigger the assigned agent when ANY actor (member or agent) moves an
+	// issue out of backlog. Backlog acts as a parking lot — moving to an
+	// active status signals the issue is ready for work.
+	//
+	// Note we deliberately accept agent actors here too: this is the canonical
+	// hand-off path in multi-stage pipelines (e.g. pipeline-initializer flips
+	// the requirement sub-issue to `todo`; designer flips coder; coder flips
+	// tester; etc.). Restricting to `actorType == "member"` would force a
+	// human in the loop on every stage transition, which defeats the whole
+	// agent-to-agent design.
+	if statusChanged && !assigneeChanged &&
 		prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" {
 		if h.isAgentAssigneeReady(r.Context(), issue) {
 			h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
@@ -2564,8 +2571,10 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Trigger agent when moving out of backlog (batch).
-		if statusChanged && !assigneeChanged && actorType == "member" &&
+		// Trigger agent when ANY actor moves an issue out of backlog (batch).
+		// Mirrors the single-issue UpdateIssue path; agent actors are accepted
+		// to support pipeline hand-offs (see UpdateIssue comment for context).
+		if statusChanged && !assigneeChanged &&
 			prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" {
 			if h.isAgentAssigneeReady(r.Context(), issue) {
 				h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
