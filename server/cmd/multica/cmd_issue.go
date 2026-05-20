@@ -235,6 +235,20 @@ var issueUsageCmd = &cobra.Command{
 	RunE: runIssueUsage,
 }
 
+var issueTimelineCmd = &cobra.Command{
+	Use:   "timeline <id>",
+	Short: "List the chronological event log for an issue (comments + activities)",
+	Long: "Returns the merged timeline: every comment AND every status/assignee/etc. " +
+		"activity-log entry, with actor (member or agent) and timestamp. This is the " +
+		"only way to answer 'who pushed CC-42 to in_review' or 'when did X transition " +
+		"to done', since issue rows themselves only carry current state.\n\n" +
+		"Backed by GET /api/issues/{id}/timeline. Returns up to 2000 entries (server cap), " +
+		"oldest first. Use --since to filter to entries after a timestamp, --type to keep " +
+		"only one kind, and --output json + jq for fancier slicing.",
+	Args: exactArgs(1),
+	RunE: runIssueTimeline,
+}
+
 var validIssueStatuses = []string{
 	"backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled",
 }
@@ -254,6 +268,7 @@ func init() {
 	issueCmd.AddCommand(issueCancelTaskCmd)
 	issueCmd.AddCommand(issueSearchCmd)
 	issueCmd.AddCommand(issueUsageCmd)
+	issueCmd.AddCommand(issueTimelineCmd)
 
 	issueCommentCmd.AddCommand(issueCommentListCmd)
 	issueCommentCmd.AddCommand(issueCommentAddCmd)
@@ -279,6 +294,12 @@ func init() {
 
 	// issue usage
 	issueUsageCmd.Flags().String("output", "table", "Output format: table or json")
+
+	// issue timeline
+	issueTimelineCmd.Flags().String("output", "table", "Output format: table or json")
+	issueTimelineCmd.Flags().String("since", "", "Only return entries created after this RFC3339 timestamp (e.g. 2026-05-01T00:00:00Z)")
+	issueTimelineCmd.Flags().String("type", "", "Only return entries of this type: 'comment' or 'activity'")
+	issueTimelineCmd.Flags().Int("limit", 50, "Max rows to render in table mode (json mode is unaffected; server returns up to 2000)")
 
 	// issue create
 	issueCreateCmd.Flags().String("title", "", "Issue title (required)")
@@ -1852,4 +1873,122 @@ func runIssueUsage(cmd *cobra.Command, args []string) error {
 	}}
 	cli.PrintTable(os.Stdout, headers, rows)
 	return nil
+}
+
+func runIssueTimeline(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+
+	// The endpoint returns a flat ASC array when no pagination params are
+	// present. We don't pass any, so we always get the flat shape.
+	var entries []map[string]any
+	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/timeline", &entries); err != nil {
+		return fmt.Errorf("get issue timeline: %w", err)
+	}
+
+	since, _ := cmd.Flags().GetString("since")
+	wantType, _ := cmd.Flags().GetString("type")
+	if wantType != "" && wantType != "comment" && wantType != "activity" {
+		return fmt.Errorf("--type must be 'comment' or 'activity', got %q", wantType)
+	}
+
+	// Client-side filtering. Cheap because timelineHardCap is 2000; doing it
+	// here means we don't expand the server's URL surface for what's mostly a
+	// CLI-shaped UX concern.
+	if since != "" || wantType != "" {
+		filtered := entries[:0]
+		for _, e := range entries {
+			if wantType != "" && strVal(e, "type") != wantType {
+				continue
+			}
+			if since != "" && strVal(e, "created_at") < since {
+				continue
+			}
+			filtered = append(filtered, e)
+		}
+		entries = filtered
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, entries)
+	}
+
+	limit, _ := cmd.Flags().GetInt("limit")
+	if limit > 0 && len(entries) > limit {
+		// Keep the most recent N for the table view (timeline is ASC, so tail).
+		entries = entries[len(entries)-limit:]
+	}
+
+	// Resolve actor handles. Cache to avoid re-fetching the same agent/member.
+	actors := loadActorDisplayLookup(ctx, client)
+
+	headers := []string{"TIME", "TYPE", "ACTOR", "ACTION/CONTENT"}
+	rows := make([][]string, 0, len(entries))
+	for _, e := range entries {
+		// Trim timestamp to minutes for compactness: "2026-05-19T08:09".
+		created := strVal(e, "created_at")
+		if len(created) >= 16 {
+			created = created[:16]
+		}
+		etype := strVal(e, "type")
+		actor := actors.actor(strVal(e, "actor_type"), strVal(e, "actor_id"))
+
+		var detail string
+		if etype == "activity" {
+			detail = strVal(e, "action")
+			// Append a short snippet of details when present so status changes
+			// like "status_changed" carry their from/to next to them.
+			if d, ok := e["details"]; ok && d != nil {
+				if dj, err := json.Marshal(d); err == nil {
+					ds := string(dj)
+					if len(ds) > 80 {
+						ds = ds[:77] + "..."
+					}
+					detail = detail + " " + ds
+				}
+			}
+		} else {
+			// type=comment — show the first line, capped.
+			content := strVal(e, "content")
+			if i := indexNewline(content); i >= 0 {
+				content = content[:i]
+			}
+			if utf8.RuneCountInString(content) > 80 {
+				rs := []rune(content)
+				content = string(rs[:77]) + "..."
+			}
+			detail = content
+		}
+
+		rows = append(rows, []string{created, etype, actor, detail})
+	}
+	cli.PrintTable(os.Stdout, headers, rows)
+	if len(entries) > 0 {
+		// Hint that we may have truncated to --limit so the user can
+		// switch to --output json or raise --limit if needed.
+		fmt.Fprintf(os.Stderr, "\n%d entries shown (server cap: 2000; raise --limit or --output json for the full set)\n", len(entries))
+	}
+	return nil
+}
+
+// indexNewline returns the byte index of the first '\n' or '\r', or -1.
+// Defined here (not via strings.IndexAny) to keep the file's import set lean.
+func indexNewline(s string) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' || s[i] == '\r' {
+			return i
+		}
+	}
+	return -1
 }
