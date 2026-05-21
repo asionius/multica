@@ -276,6 +276,14 @@ vi.mock("@multica/core/issues/stores", () => ({
     };
     return selector ? selector(state) : state;
   },
+  useSubIssueDescriptionStore: (selector?: any) => {
+    const state = {
+      collapsed: true,
+      setCollapsed: () => {},
+      toggle: () => {},
+    };
+    return selector ? selector(state) : state;
+  },
   useCommentDraftStore: Object.assign(
     (selector?: any) => {
       const state = {

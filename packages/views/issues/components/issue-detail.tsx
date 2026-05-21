@@ -63,7 +63,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { issueListOptions, issueDetailOptions, childIssuesOptions, issueUsageOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
 import { issueLabelsOptions } from "@multica/core/labels";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
-import { useRecentIssuesStore } from "@multica/core/issues/stores";
+import { useRecentIssuesStore, useSubIssueDescriptionStore } from "@multica/core/issues/stores";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
 import { BatchActionToolbar } from "./batch-action-toolbar";
 import { useIssueTimeline } from "../hooks/use-issue-timeline";
@@ -72,7 +72,7 @@ import { useIssueSubscribers } from "../hooks/use-issue-subscribers";
 import { ReactionBar } from "@multica/ui/components/common/reaction-bar";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { api } from "@multica/core/api";
-import { timeAgo } from "@multica/core/utils";
+import { RelativeTimestamp } from "../../common/relative-timestamp";
 import { cn } from "@multica/ui/lib/utils";
 
 import { ProgressRing } from "./progress-ring";
@@ -460,18 +460,10 @@ function ActivityBlock({
                     {t(($) => $.activity.coalesced_badge, { count: entry.coalesced_count ?? 1 })}
                   </span>
                 )}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="ml-auto shrink-0 cursor-default">
-                      {timeAgo(entry.created_at)}
-                    </span>
-                  }
-                />
-                <TooltipContent side="top">
-                  {new Date(entry.created_at).toLocaleString()}
-                </TooltipContent>
-              </Tooltip>
+              <RelativeTimestamp
+                date={entry.created_at}
+                className="ml-auto shrink-0"
+              />
             </div>
           </div>
         );
@@ -946,6 +938,14 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   // Sub-issue queries
   const parentIssueId = issue?.parent_issue_id;
+  const isSubIssue = !!parentIssueId;
+  // Sub-issues default to a collapsed description — they are usually opened
+  // for the comment thread, not the (often template-generated) description.
+  // The collapsed state is a single global preference shared across all
+  // sub-issues; top-level issues ignore it (description is always shown).
+  const subDescCollapsed = useSubIssueDescriptionStore((s) => s.collapsed);
+  const toggleSubDesc = useSubIssueDescriptionStore((s) => s.toggle);
+  const descriptionCollapsed = isSubIssue && subDescCollapsed;
   const { data: parentIssue = null } = useQuery({
     ...issueDetailOptions(wsId, parentIssueId ?? ""),
     enabled: !!parentIssueId,
@@ -1650,7 +1650,36 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             </AppLink>
           )}
 
-          <div {...descDropZoneProps} className="relative mt-5 rounded-lg">
+          {/* Description.
+              Sub-issues default-collapse the editor to surface comments first.
+              Top-level issues always show it (no toggle rendered). */}
+          {isSubIssue && (
+            <div className="mt-6 mb-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={toggleSubDesc}
+                aria-expanded={!descriptionCollapsed}
+                className="flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-foreground/80 transition-colors"
+              >
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 text-muted-foreground transition-transform",
+                    descriptionCollapsed && "-rotate-90",
+                  )}
+                />
+                <span>{t(($) => $.detail.section_description)}</span>
+              </button>
+            </div>
+          )}
+
+          <div
+            {...descDropZoneProps}
+            className={cn(
+              "relative rounded-lg",
+              !isSubIssue && "mt-5",
+              descriptionCollapsed && "hidden",
+            )}
+          >
             <ContentEditor
               ref={descEditorRef}
               key={id}

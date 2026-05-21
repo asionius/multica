@@ -30,6 +30,16 @@
     "agents_label": "Agents",
     "agents_description": "Issues assigned to AI agents"
   },
+  "scopeBar": {
+    "project": "Project",
+    "parentIssue": "Parent issue",
+    "allProjects": "All projects",
+    "allIssues": "All issues",
+    "noProject": "No project",
+    "searchProject": "Search projects",
+    "searchIssue": "Search issues",
+    "noParentIssues": "No parent issues"
+  },
   "filters": {
     "tooltip": "Filter",
     "placeholder": "Filter...",
@@ -127,6 +137,7 @@
     "add_sub_issue_aria": "Add sub-issue",
     "section_properties": "Properties",
     "section_parent_issue": "Parent issue",
+    "section_description": "Description",
     "section_pull_requests": "Pull requests",
     "section_details": "Details",
     "section_token_usage": "Token usage",

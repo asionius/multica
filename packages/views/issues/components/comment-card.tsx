@@ -12,7 +12,6 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@multica/ui/components/ui/dropdown-menu";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,11 +24,11 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@multica/ui/components/ui/collapsible";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { RelativeTimestamp } from "../../common/relative-timestamp";
 import { ReactionBar } from "@multica/ui/components/common/reaction-bar";
 import { QuickEmojiPicker } from "@multica/ui/components/common/quick-emoji-picker";
 import { cn } from "@multica/ui/lib/utils";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { timeAgo } from "@multica/core/utils";
 import { ContentEditor, type ContentEditorRef, copyMarkdown, ReadonlyContent, useFileDropZone, FileDropOverlay, useDownloadAttachment, useAttachmentPreview, AttachmentBlock } from "../../editor";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
@@ -284,18 +283,10 @@ function CommentRow({
         <span className="cursor-pointer text-sm font-medium">
           {getActorName(entry.actor_type, entry.actor_id)}
         </span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className="text-xs text-muted-foreground cursor-default">
-                {timeAgo(entry.created_at)}
-              </span>
-            }
-          />
-          <TooltipContent side="top">
-            {new Date(entry.created_at).toLocaleString()}
-          </TooltipContent>
-        </Tooltip>
+        <RelativeTimestamp
+          date={entry.created_at}
+          className="text-xs text-muted-foreground"
+        />
 
         {!isTemp && (
           <div className="ml-auto flex items-center gap-0.5">
@@ -547,18 +538,10 @@ function CommentCardImpl({
             <span className="shrink-0 cursor-pointer text-sm font-medium">
               {getActorName(entry.actor_type, entry.actor_id)}
             </span>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="shrink-0 text-xs text-muted-foreground cursor-default">
-                    {timeAgo(entry.created_at)}
-                  </span>
-                }
-              />
-              <TooltipContent side="top">
-                {new Date(entry.created_at).toLocaleString()}
-              </TooltipContent>
-            </Tooltip>
+            <RelativeTimestamp
+              date={entry.created_at}
+              className="shrink-0 text-xs text-muted-foreground"
+            />
 
             {!open && contentPreview && (
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
