@@ -747,6 +747,14 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		projectFilter = id
 	}
+	var parentIssueFilter pgtype.UUID
+	if p := r.URL.Query().Get("parent_issue_id"); p != "" {
+		id, ok := parseUUIDOrBadRequest(w, p, "parent_issue_id")
+		if !ok {
+			return
+		}
+		parentIssueFilter = id
+	}
 
 	// open_only=true returns all non-done/cancelled issues (no limit).
 	if r.URL.Query().Get("open_only") == "true" {
@@ -805,15 +813,16 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	issues, err := h.Queries.ListIssues(ctx, db.ListIssuesParams{
-		WorkspaceID: wsUUID,
-		Limit:       int32(limit),
-		Offset:      int32(offset),
-		Status:      statusFilter,
-		Priority:    priorityFilter,
-		AssigneeID:  assigneeFilter,
-		AssigneeIds: assigneeIdsFilter,
-		CreatorID:   creatorFilter,
-		ProjectID:   projectFilter,
+		WorkspaceID:   wsUUID,
+		Limit:         int32(limit),
+		Offset:        int32(offset),
+		Status:        statusFilter,
+		Priority:      priorityFilter,
+		AssigneeID:    assigneeFilter,
+		AssigneeIds:   assigneeIdsFilter,
+		CreatorID:     creatorFilter,
+		ProjectID:     projectFilter,
+		ParentIssueID: parentIssueFilter,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list issues")

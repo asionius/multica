@@ -286,6 +286,7 @@ func init() {
 	issueListCmd.Flags().String("assignee", "", "Filter by assignee name (member, agent, or squad; fuzzy match)")
 	issueListCmd.Flags().String("assignee-id", "", "Filter by assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueListCmd.Flags().String("project", "", "Filter by project ID")
+	issueListCmd.Flags().String("parent", "", "Filter by parent issue (ID, UUID, or identifier e.g. CC-9)")
 	issueListCmd.Flags().Int("limit", 50, "Maximum number of issues to return")
 	issueListCmd.Flags().Int("offset", 0, "Number of issues to skip (for pagination)")
 
@@ -439,6 +440,13 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		params.Set("project_id", project.ID)
+	}
+	if v, _ := cmd.Flags().GetString("parent"); v != "" {
+		parent, err := resolveIssueRef(ctx, client, v)
+		if err != nil {
+			return fmt.Errorf("resolve parent issue: %w", err)
+		}
+		params.Set("parent_issue_id", parent.ID)
 	}
 
 	path := "/api/issues"

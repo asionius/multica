@@ -590,20 +590,22 @@ WHERE workspace_id = $1
   AND ($7::uuid[] IS NULL OR assignee_id = ANY($7::uuid[]))
   AND ($8::uuid IS NULL OR creator_id = $8)
   AND ($9::uuid IS NULL OR project_id = $9)
+  AND ($10::uuid IS NULL OR parent_issue_id = $10)
 ORDER BY position ASC, created_at DESC
 LIMIT $2 OFFSET $3
 `
 
 type ListIssuesParams struct {
-	WorkspaceID pgtype.UUID   `json:"workspace_id"`
-	Limit       int32         `json:"limit"`
-	Offset      int32         `json:"offset"`
-	Status      pgtype.Text   `json:"status"`
-	Priority    pgtype.Text   `json:"priority"`
-	AssigneeID  pgtype.UUID   `json:"assignee_id"`
-	AssigneeIds []pgtype.UUID `json:"assignee_ids"`
-	CreatorID   pgtype.UUID   `json:"creator_id"`
-	ProjectID   pgtype.UUID   `json:"project_id"`
+	WorkspaceID   pgtype.UUID   `json:"workspace_id"`
+	Limit         int32         `json:"limit"`
+	Offset        int32         `json:"offset"`
+	Status        pgtype.Text   `json:"status"`
+	Priority      pgtype.Text   `json:"priority"`
+	AssigneeID    pgtype.UUID   `json:"assignee_id"`
+	AssigneeIds   []pgtype.UUID `json:"assignee_ids"`
+	CreatorID     pgtype.UUID   `json:"creator_id"`
+	ProjectID     pgtype.UUID   `json:"project_id"`
+	ParentIssueID pgtype.UUID   `json:"parent_issue_id"`
 }
 
 type ListIssuesRow struct {
@@ -639,6 +641,7 @@ func (q *Queries) ListIssues(ctx context.Context, arg ListIssuesParams) ([]ListI
 		arg.AssigneeIds,
 		arg.CreatorID,
 		arg.ProjectID,
+		arg.ParentIssueID,
 	)
 	if err != nil {
 		return nil, err
