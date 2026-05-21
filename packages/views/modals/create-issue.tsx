@@ -33,7 +33,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/
 import { Button } from "@multica/ui/components/ui/button";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { ContentEditor, type ContentEditorRef, TitleEditor, useFileDropZone, FileDropOverlay } from "../editor";
-import { StatusIcon, StatusPicker, PriorityPicker, AssigneePicker, StartDatePicker, DueDatePicker } from "../issues/components";
+import { StatusIcon, StatusPicker, PriorityPicker, AssigneePicker, StartDatePicker, DueDatePicker, RuntimePicker } from "../issues/components";
 import { BacklogAgentHintContent } from "../issues/components/backlog-agent-hint-dialog";
 import { ProjectPicker } from "../projects/components/project-picker";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
@@ -124,6 +124,13 @@ export function ManualCreatePanel({
   const [projectId, setProjectId] = useState<string | undefined>(
     (data?.project_id as string) || undefined,
   );
+  // Per-issue runtime pin: only meaningful when assignee is an agent.
+  // Stays null until the user chooses a runtime; null = use agent default.
+  // Not persisted in draft store — it's ephemeral and tied to the agent
+  // assignee, which itself can change before submit.
+  const [runtimeId, setRuntimeId] = useState<string | null>(
+    (data?.runtime_id as string | null | undefined) ?? null,
+  );
   const [parentIssueId, setParentIssueId] = useState<string | undefined>(
     (data?.parent_issue_id as string) || undefined,
   );
@@ -204,6 +211,11 @@ export function ManualCreatePanel({
         attachment_ids: attachmentIds.length > 0 ? attachmentIds : undefined,
         parent_issue_id: parentIssueId,
         project_id: projectId,
+        // Only send runtime_id when assignee is an agent — for member/squad
+        // assignees the field has no effect server-side, sending it just
+        // adds noise to the request payload.
+        runtime_id:
+          assigneeType === "agent" && runtimeId ? runtimeId : undefined,
       });
 
       // Link queued children to the new parent. Deferred to after create
@@ -517,6 +529,24 @@ export function ManualCreatePanel({
                 triggerRender={<PillButton />}
                 align="start"
               />
+
+              {/* Runtime — per-issue runtime pin, only meaningful when the
+                  assignee is an agent. For member/squad assignees the field
+                  has no dispatch effect, so the picker is hidden entirely.
+                  Workspace id comes from the auth store. */}
+              {assigneeType === "agent" && wsId && (
+                <RuntimePicker
+                  workspaceId={wsId}
+                  runtimeId={runtimeId}
+                  onUpdate={(u) => {
+                    if (u.runtime_id === null || typeof u.runtime_id === "string") {
+                      setRuntimeId(u.runtime_id ?? null);
+                    }
+                  }}
+                  triggerRender={<PillButton />}
+                  align="start"
+                />
+              )}
 
               {/* Parent chip — appears when parent is set.
                   Placed before the ⋯ so it wraps to a new line with ⋯ if

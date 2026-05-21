@@ -37,6 +37,13 @@ export interface Issue {
   creator_id: string;
   parent_issue_id: string | null;
   project_id: string | null;
+  /**
+   * Per-issue runtime pin (overrides the assigned agent's default runtime
+   * when the daemon dispatches the issue). null = use agent default.
+   * Optional because older server responses may omit the field — never rely
+   * on it being present without the optional check.
+   */
+  runtime_id?: string | null;
   position: number;
   start_date: string | null;
   due_date: string | null;

@@ -159,6 +159,7 @@
     "prop_start_date": "开始日期",
     "prop_due_date": "截止日期",
     "prop_project": "项目",
+    "prop_runtime": "运行环境",
     "prop_labels": "标签",
     "add_property_action": "添加字段",
     "prop_created_by": "创建者",
@@ -369,6 +370,14 @@
       "manage_dialog_title": "管理标签",
       "create_action": "创建",
       "create_failed": "创建标签失败"
+    },
+    "runtime": {
+      "trigger_label": "运行环境",
+      "loading": "加载运行环境...",
+      "section_mine": "我的运行环境",
+      "section_shared": "工作区共享",
+      "section_pin": "固定",
+      "clear_action": "清除（使用 agent 默认）"
     }
   },
   "labels_panel": {

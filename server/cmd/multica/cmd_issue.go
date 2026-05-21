@@ -315,6 +315,7 @@ func init() {
 	issueCreateCmd.Flags().String("start-date", "", "Start date (RFC3339 format)")
 	issueCreateCmd.Flags().String("due-date", "", "Due date (RFC3339 format)")
 	issueCreateCmd.Flags().Bool("allow-duplicate", false, "Allow creating an issue even when an active duplicate exists")
+	issueCreateCmd.Flags().String("runtime", "", "Pin this issue to an agent_runtime UUID (per-issue runtime override; private runtimes require ownership). Defaults to the assigned agent's default runtime when empty.")
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 
@@ -331,6 +332,7 @@ func init() {
 	issueUpdateCmd.Flags().String("start-date", "", "New start date (RFC3339 format; pass empty string to clear)")
 	issueUpdateCmd.Flags().String("due-date", "", "New due date (RFC3339 format)")
 	issueUpdateCmd.Flags().String("parent", "", "Parent issue ID (use --parent \"\" to clear)")
+	issueUpdateCmd.Flags().String("runtime", "", "Set the issue's runtime pin to this agent_runtime UUID; pass --runtime \"\" to clear and fall back to the assigned agent's default runtime.")
 	issueUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue status
@@ -630,6 +632,9 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if v, _ := cmd.Flags().GetBool("allow-duplicate"); v {
 		body["allow_duplicate"] = true
 	}
+	if v, _ := cmd.Flags().GetString("runtime"); v != "" {
+		body["runtime_id"] = v
+	}
 	aType, aID, hasAssignee, resolveErr := pickAssigneeFromFlags(ctx, client, cmd, "assignee", "assignee-id", issueAssigneeKinds)
 	if resolveErr != nil {
 		return fmt.Errorf("resolve assignee: %w", resolveErr)
@@ -811,6 +816,17 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("resolve parent issue: %w", err)
 			}
 			body["parent_issue_id"] = parent.ID
+		}
+	}
+	// runtime pin: --runtime <uuid> sets the pin; --runtime "" clears it
+	// back to NULL (handler interprets explicit JSON null as "clear", and
+	// omitting the field as "no change"). Mirrors the --parent tri-state.
+	if cmd.Flags().Changed("runtime") {
+		v, _ := cmd.Flags().GetString("runtime")
+		if v == "" {
+			body["runtime_id"] = nil
+		} else {
+			body["runtime_id"] = v
 		}
 	}
 

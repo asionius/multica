@@ -345,6 +345,7 @@ type Issue struct {
 	OriginID           pgtype.UUID        `json:"origin_id"`
 	FirstExecutedAt    pgtype.Timestamptz `json:"first_executed_at"`
 	StartDate          pgtype.Timestamptz `json:"start_date"`
+	RuntimeID          pgtype.UUID        `json:"runtime_id"`
 }
 
 type IssueDependency struct {
@@ -644,21 +645,17 @@ type WebhookDelivery struct {
 }
 
 type Workspace struct {
-	ID               pgtype.UUID        `json:"id"`
-	Name             string             `json:"name"`
-	Slug             string             `json:"slug"`
-	Description      pgtype.Text        `json:"description"`
-	Settings         []byte             `json:"settings"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	Context          pgtype.Text        `json:"context"`
-	Repos            []byte             `json:"repos"`
-	IssuePrefix      string             `json:"issue_prefix"`
-	IssueCounter     int32              `json:"issue_counter"`
-	IsDemoTemplate   bool               `json:"is_demo_template"`
-	SourceTemplateID pgtype.UUID        `json:"source_template_id"`
-	DemoForkedAt     pgtype.Timestamptz `json:"demo_forked_at"`
-	ArchivedAt       pgtype.Timestamptz `json:"archived_at"`
+	ID           pgtype.UUID        `json:"id"`
+	Name         string             `json:"name"`
+	Slug         string             `json:"slug"`
+	Description  pgtype.Text        `json:"description"`
+	Settings     []byte             `json:"settings"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	Context      pgtype.Text        `json:"context"`
+	Repos        []byte             `json:"repos"`
+	IssuePrefix  string             `json:"issue_prefix"`
+	IssueCounter int32              `json:"issue_counter"`
 }
 
 type WorkspaceInvitation struct {

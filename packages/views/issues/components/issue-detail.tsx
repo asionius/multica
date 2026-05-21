@@ -45,7 +45,7 @@ import type { Attachment, Issue, IssueStatus, IssuePriority, TimelineEntry, Upda
 import { STATUS_CONFIG, PRIORITY_CONFIG } from "@multica/core/issues/config";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { toast } from "sonner";
-import { StatusIcon, PriorityIcon, StatusPicker, PriorityPicker, StartDatePicker, DueDatePicker, AssigneePicker, LabelPicker } from ".";
+import { StatusIcon, PriorityIcon, StatusPicker, PriorityPicker, StartDatePicker, DueDatePicker, AssigneePicker, LabelPicker, RuntimePicker } from ".";
 import { IssueActionsDropdown, useIssueActions } from "../actions";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { CommentCard } from "./comment-card";
@@ -1231,6 +1231,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           <PropRow label={t(($) => $.detail.prop_assignee)}>
             <AssigneePicker assigneeType={issue.assignee_type} assigneeId={issue.assignee_id} onUpdate={handleUpdateField} align="start" />
           </PropRow>
+          {issue.assignee_type === "agent" && wsId && (
+            <PropRow label={t(($) => $.detail.prop_runtime)}>
+              <RuntimePicker
+                workspaceId={wsId}
+                runtimeId={issue.runtime_id ?? null}
+                onUpdate={handleUpdateField}
+                align="start"
+              />
+            </PropRow>
+          )}
           <PropRow label={t(($) => $.detail.prop_project)}>
             <ProjectPicker
               projectId={issue.project_id}

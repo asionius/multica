@@ -370,6 +370,26 @@ func (s *TaskService) willRetryTask(task db.AgentTaskQueue) bool {
 	return task.IssueID.Valid || task.ChatSessionID.Valid
 }
 
+// resolveIssueRuntimeID returns the runtime to dispatch this issue's task on.
+// When issue.runtime_id is set (per-issue runtime pin), it takes precedence
+// over the agent's default runtime — that is the whole point of the pin: an
+// issue created/owned by a specific user runs the shared agent on the user's
+// own runtime (and credentials), without forking the agent definition per
+// user.
+//
+// Permission to set issue.runtime_id is enforced at the API write path
+// (POST/PATCH /api/issues), so by the time we reach here the value has
+// already been gated by canUseRuntimeForAgent. The FK on issue.runtime_id
+// is ON DELETE SET NULL, so a dangling reference cannot reach this code —
+// if the runtime got archived/deleted, issue.runtime_id will already be
+// NULL and we fall through to the agent default.
+func resolveIssueRuntimeID(issue db.Issue, agent db.Agent) pgtype.UUID {
+	if issue.RuntimeID.Valid {
+		return issue.RuntimeID
+	}
+	return agent.RuntimeID
+}
+
 // EnqueueTaskForIssue creates a queued task for an agent-assigned issue.
 // No context snapshot is stored — the agent fetches all data it needs at
 // runtime via the multica CLI.
@@ -408,7 +428,7 @@ func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, trig
 
 	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 		AgentID:           issue.AssigneeID,
-		RuntimeID:         agent.RuntimeID,
+		RuntimeID:         resolveIssueRuntimeID(issue, agent),
 		IssueID:           issue.ID,
 		Priority:          priorityToInt(issue.Priority),
 		TriggerCommentID:  triggerCommentID,
@@ -471,7 +491,7 @@ func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, ag
 
 	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 		AgentID:          agentID,
-		RuntimeID:        agent.RuntimeID,
+		RuntimeID:        resolveIssueRuntimeID(issue, agent),
 		IssueID:          issue.ID,
 		Priority:         priorityToInt(issue.Priority),
 		TriggerCommentID: triggerCommentID,

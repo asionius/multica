@@ -160,6 +160,7 @@
     "prop_start_date": "Start date",
     "prop_due_date": "Due date",
     "prop_project": "Project",
+    "prop_runtime": "Runtime",
     "prop_labels": "Labels",
     "add_property_action": "Add property",
     "prop_created_by": "Created by",
@@ -378,6 +379,14 @@
       "manage_dialog_title": "Manage labels",
       "create_action": "Create",
       "create_failed": "Failed to create label"
+    },
+    "runtime": {
+      "trigger_label": "Runtime",
+      "loading": "Loading runtimes…",
+      "section_mine": "My runtimes",
+      "section_shared": "Workspace shared",
+      "section_pin": "Pin",
+      "clear_action": "Clear (use agent default)"
     }
   },
   "labels_panel": {

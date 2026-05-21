@@ -15,6 +15,11 @@ export interface CreateIssueRequest {
   start_date?: string;
   due_date?: string;
   attachment_ids?: string[];
+  /** Per-issue runtime pin (overrides agent.runtime_id at dispatch). Server
+   * gates writes via canUseRuntimeForAgent — private runtimes require
+   * ownership; public ones are open to any workspace member. Omit to fall
+   * back to the assigned agent's default runtime (existing behavior). */
+  runtime_id?: string;
 }
 
 export interface UpdateIssueRequest {
@@ -29,6 +34,10 @@ export interface UpdateIssueRequest {
   due_date?: string | null;
   parent_issue_id?: string | null;
   project_id?: string | null;
+  /** Per-issue runtime pin (overrides agent.runtime_id at dispatch). Tri-state:
+   * field absent on the wire = no change; explicit null = clear pin (fall back
+   * to agent default); UUID = set / change pin. */
+  runtime_id?: string | null;
   /** Attachment IDs to bind to this issue alongside the description update.
    *  Used by the description editor to register newly uploaded files so they
    *  surface in `issueAttachments` and keep their preview Eye on refresh. */

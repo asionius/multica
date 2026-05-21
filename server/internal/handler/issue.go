@@ -41,6 +41,10 @@ type IssueResponse struct {
 	CreatorID     string                  `json:"creator_id"`
 	ParentIssueID *string                 `json:"parent_issue_id"`
 	ProjectID     *string                 `json:"project_id"`
+	// RuntimeID is the per-issue runtime override (nullable). When non-null
+	// the daemon dispatches the assigned agent on this runtime instead of
+	// agent.runtime_id; null = agent default.
+	RuntimeID     *string                 `json:"runtime_id"`
 	Position      float64                 `json:"position"`
 	StartDate     *string                 `json:"start_date"`
 	DueDate       *string                 `json:"due_date"`
@@ -74,6 +78,7 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		CreatorID:     uuidToString(i.CreatorID),
 		ParentIssueID: uuidToPtr(i.ParentIssueID),
 		ProjectID:     uuidToPtr(i.ProjectID),
+		RuntimeID:     uuidToPtr(i.RuntimeID),
 		Position:      i.Position,
 		StartDate:     timestampToPtr(i.StartDate),
 		DueDate:       timestampToPtr(i.DueDate),
@@ -100,6 +105,7 @@ func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueRespons
 		CreatorID:     uuidToString(i.CreatorID),
 		ParentIssueID: uuidToPtr(i.ParentIssueID),
 		ProjectID:     uuidToPtr(i.ProjectID),
+		RuntimeID:     uuidToPtr(i.RuntimeID),
 		Position:      i.Position,
 		StartDate:     timestampToPtr(i.StartDate),
 		DueDate:       timestampToPtr(i.DueDate),
@@ -1586,6 +1592,13 @@ type CreateIssueRequest struct {
 	StartDate     *string  `json:"start_date"`
 	DueDate       *string  `json:"due_date"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	// RuntimeID pins this issue to a specific agent_runtime, overriding the
+	// assigned agent's default runtime when the daemon dispatches it. Optional.
+	// Permission to set this reuses canUseRuntimeForAgent (handler/runtime.go):
+	// caller must own the runtime, or the runtime must be 'public', or caller
+	// must be a workspace owner/admin. NULL = use agent's default (existing
+	// behavior).
+	RuntimeID *string `json:"runtime_id,omitempty"`
 	// OriginType / OriginID stamp the new issue with its provenance so
 	// platform-internal flows can deterministically locate it later. Only
 	// trusted callers should set these — currently the daemon CLI passes
@@ -1706,6 +1719,38 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		dueDate = pgtype.Timestamptz{Time: t, Valid: true}
 	}
 
+	// Optional runtime_id pin: validate the runtime is in this workspace and
+	// the caller is authorized to use it. Reuses canUseRuntimeForAgent so the
+	// rule is the same as binding a runtime to an agent: private runtimes
+	// require ownership; public runtimes are open to any workspace member;
+	// workspace owner/admin always allowed. NULL preserves existing behavior
+	// (daemon falls back to agent.runtime_id).
+	var runtimeID pgtype.UUID
+	if req.RuntimeID != nil && *req.RuntimeID != "" {
+		rid, ok := parseUUIDOrBadRequest(w, *req.RuntimeID, "runtime_id")
+		if !ok {
+			return
+		}
+		rt, err := h.Queries.GetAgentRuntime(r.Context(), rid)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid runtime_id")
+			return
+		}
+		if uuidToString(rt.WorkspaceID) != workspaceID {
+			writeError(w, http.StatusBadRequest, "runtime not in this workspace")
+			return
+		}
+		member, ok := h.workspaceMember(w, r, workspaceID)
+		if !ok {
+			return
+		}
+		if !canUseRuntimeForAgent(member, rt) {
+			writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can pin issues to it")
+			return
+		}
+		runtimeID = rid
+	}
+
 	// Use a transaction to atomically guard against active duplicates,
 	// increment the workspace issue counter, and create the issue.
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -1787,6 +1832,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 			DueDate:       dueDate,
 			Number:        issueNumber,
 			ProjectID:     projectID,
+			RuntimeID:     runtimeID,
 			OriginType:    originType,
 			OriginID:      originID,
 		})
@@ -1807,6 +1853,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 			DueDate:       dueDate,
 			Number:        issueNumber,
 			ProjectID:     projectID,
+			RuntimeID:     runtimeID,
 		})
 	}
 	if err != nil {
@@ -1910,6 +1957,12 @@ type UpdateIssueRequest struct {
 	DueDate       *string  `json:"due_date"`
 	ParentIssueID *string  `json:"parent_issue_id"`
 	ProjectID     *string  `json:"project_id"`
+	// RuntimeID pins the issue to a specific agent_runtime, overriding the
+	// assigned agent's default runtime when the daemon dispatches it. Tri-state:
+	// field absent in JSON = no change; explicit null = clear pin (fall back
+	// to agent default); UUID = set / change. Permission rule mirrors
+	// CreateIssue (canUseRuntimeForAgent).
+	RuntimeID *string `json:"runtime_id"`
 	// AttachmentIDs lets the description editor bind newly uploaded files to
 	// this issue so they surface in `GET /api/issues/:id/attachments` and the
 	// editor's preview Eye keeps working past a refresh. Existing bindings
@@ -1952,6 +2005,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		DueDate:       prevIssue.DueDate,
 		ParentIssueID: prevIssue.ParentIssueID,
 		ProjectID:     prevIssue.ProjectID,
+		RuntimeID:     prevIssue.RuntimeID,
 	}
 
 	// COALESCE fields — only set when explicitly provided
@@ -1987,6 +2041,37 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			params.AssigneeID = id
 		} else {
 			params.AssigneeID = pgtype.UUID{Valid: false} // explicit null = unassign
+		}
+	}
+	if _, ok := rawFields["runtime_id"]; ok {
+		// Tri-state: explicit null clears the pin (fall back to agent default);
+		// UUID sets / changes the pin. Permission rule reuses
+		// canUseRuntimeForAgent (same as agent.go and CreateIssue).
+		if req.RuntimeID != nil && *req.RuntimeID != "" {
+			rid, ok := parseUUIDOrBadRequest(w, *req.RuntimeID, "runtime_id")
+			if !ok {
+				return
+			}
+			rt, err := h.Queries.GetAgentRuntime(r.Context(), rid)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid runtime_id")
+				return
+			}
+			if uuidToString(rt.WorkspaceID) != uuidToString(prevIssue.WorkspaceID) {
+				writeError(w, http.StatusBadRequest, "runtime not in this workspace")
+				return
+			}
+			member, ok := h.workspaceMember(w, r, uuidToString(prevIssue.WorkspaceID))
+			if !ok {
+				return
+			}
+			if !canUseRuntimeForAgent(member, rt) {
+				writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can pin issues to it")
+				return
+			}
+			params.RuntimeID = rid
+		} else {
+			params.RuntimeID = pgtype.UUID{Valid: false} // explicit null = clear pin
 		}
 	}
 	if _, ok := rawFields["start_date"]; ok {
