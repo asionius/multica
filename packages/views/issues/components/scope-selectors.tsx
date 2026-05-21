@@ -277,7 +277,7 @@ function ParentSelectorContent({
               <span className="text-xs text-muted-foreground shrink-0 font-mono">
                 {issue.identifier}
               </span>
-              <span className="truncate">{issue.title}</span>
+              <span className="truncate" title={issue.title}>{issue.title}</span>
             </DropdownMenuItem>
           );
         })}
