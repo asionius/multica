@@ -27,6 +27,17 @@ export interface RuntimeDevice {
   /** Defaults to "private" when the backend predates the visibility flag. */
   visibility: RuntimeVisibility;
   timezone: string;
+  /**
+   * Per-runtime env vars merged over agent.custom_env at subprocess launch
+   * (see migration 096). Runtime keys win on conflict. Older backends that
+   * predate the field omit it; treat absent as empty.
+   *
+   * When the caller can't edit the runtime, values are server-side replaced
+   * with "****" so callers see WHICH vars exist without leaking values, and
+   * `custom_env_redacted` is true. Pre-P8 backends omit both fields.
+   */
+  custom_env?: Record<string, string>;
+  custom_env_redacted?: boolean;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;

@@ -61,6 +61,7 @@ type AgentRuntime struct {
 	// IANA timezone (e.g. 'Asia/Shanghai'). Bucket boundary for per-day and per-hour token usage aggregation. Defaults to UTC for runtimes that existed before MUL-1950; the daemon registration / web UI overwrites this with an operator-detected value going forward.
 	Timezone   string `json:"timezone"`
 	Visibility string `json:"visibility"`
+	CustomEnv  []byte `json:"custom_env"`
 }
 
 type AgentSkill struct {

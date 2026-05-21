@@ -69,6 +69,16 @@ SET visibility = @visibility, updated_at = now()
 WHERE id = @id
 RETURNING *;
 
+-- name: UpdateAgentRuntimeCustomEnv :one
+-- Sets the per-runtime environment variables merged over agent.custom_env at
+-- subprocess launch (see daemon.go). Gated to canEditRuntime (owner /
+-- workspace admin) at the handler layer because public runtimes are still
+-- not edit-by-anyone — env vars are credentials, not policy.
+UPDATE agent_runtime
+SET custom_env = @custom_env, updated_at = now()
+WHERE id = @id
+RETURNING *;
+
 -- name: DeleteTaskUsageDailyForRuntime :execrows
 -- First step of an explicit user timezone edit rebuild. Delete old materialized
 -- rows before re-inserting under the runtime's new timezone.

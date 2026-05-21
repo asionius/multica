@@ -1134,6 +1134,27 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				slog.Warn("failed to unmarshal agent custom_env", "agent_id", uuidToString(agent.ID), "error", err)
 			}
 		}
+		// Merge per-runtime custom_env over agent.custom_env. Runtime keys
+		// override agent keys so per-user secrets (whichever runtime is
+		// running this task — see issue.runtime_id pin in migration 095)
+		// take precedence over the workspace-shared default. We do the merge
+		// server-side so older daemons (pre-P8) don't need new fields:
+		// they consume task.Agent.CustomEnv as before. See migration 096.
+		if task.RuntimeID.Valid {
+			if rt, err := h.Queries.GetAgentRuntime(r.Context(), task.RuntimeID); err == nil && len(rt.CustomEnv) > 0 {
+				var runtimeEnv map[string]string
+				if err := json.Unmarshal(rt.CustomEnv, &runtimeEnv); err == nil {
+					if customEnv == nil {
+						customEnv = make(map[string]string, len(runtimeEnv))
+					}
+					for k, v := range runtimeEnv {
+						customEnv[k] = v
+					}
+				} else {
+					slog.Warn("failed to unmarshal runtime custom_env", "runtime_id", uuidToString(rt.ID), "error", err)
+				}
+			}
+		}
 		var customArgs []string
 		if agent.CustomArgs != nil {
 			if err := json.Unmarshal(agent.CustomArgs, &customArgs); err != nil {

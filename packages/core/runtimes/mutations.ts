@@ -12,12 +12,12 @@ export function useDeleteRuntime(wsId: string) {
   });
 }
 
-// useUpdateRuntime patches editable fields on a runtime (timezone, visibility).
-// Invalidates the runtime list AND any keys downstream of the updated runtime
-// — usage queries are bucketed by tz on the server, so a tz change must blow
-// away cached usage rows or the chart would lie for one polling cycle. A
-// visibility change only needs the runtime list to refetch so the picker
-// disabled-state recomputes.
+// useUpdateRuntime patches editable fields on a runtime (timezone, visibility,
+// custom_env). Invalidates the runtime list AND any keys downstream of the
+// updated runtime — usage queries are bucketed by tz on the server, so a tz
+// change must blow away cached usage rows or the chart would lie for one
+// polling cycle. A visibility / custom_env change only needs the runtime
+// list to refetch so the picker disabled-state and env tab recompute.
 export function useUpdateRuntime(wsId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -26,7 +26,13 @@ export function useUpdateRuntime(wsId: string) {
       patch,
     }: {
       runtimeId: string;
-      patch: { timezone?: string; visibility?: "private" | "public" };
+      patch: {
+        timezone?: string;
+        visibility?: "private" | "public";
+        /** Per-runtime env vars merged over agent.custom_env at dispatch.
+         *  Empty map clears. See migration 096. */
+        custom_env?: Record<string, string>;
+      };
     }) => api.updateRuntime(runtimeId, patch),
     onSettled: (_data, _err, vars) => {
       qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });

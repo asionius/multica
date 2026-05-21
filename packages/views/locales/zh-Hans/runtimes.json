@@ -121,7 +121,25 @@
     "toast_deleted": "已删除运行时",
     "toast_delete_failed": "删除运行时失败",
     "running_chip_other": "· {{count}} 个进行中",
-    "queued_chip_other": "· {{count}} 个排队中"
+    "queued_chip_other": "· {{count}} 个排队中",
+    "env": {
+      "title": "环境变量",
+      "intro": "运行时级别的环境变量,任务启动时与 agent 默认环境合并,运行时同名 key 覆盖 agent — 适合用自己的凭证覆盖 agent 全局的 ANTHROPIC_API_KEY 等。",
+      "intro_readonly": "值已隐藏,因为你不能编辑此运行时。仅显示 key,便于知道它携带了哪些凭证。",
+      "empty": "未设置环境变量。",
+      "empty_readonly": "未设置环境变量。",
+      "add": "添加",
+      "save": "保存",
+      "key_placeholder": "KEY",
+      "value_placeholder": "值",
+      "show_value_aria": "显示值",
+      "hide_value_aria": "隐藏值",
+      "remove_aria": "删除该条",
+      "duplicate_keys_toast": "key 必须唯一。",
+      "saved_toast": "环境变量已保存。",
+      "save_failed_toast": "保存环境变量失败。",
+      "unsaved_changes": "有未保存改动"
+    }
   },
   "detail_page": {
     "not_found_title": "未找到运行时",

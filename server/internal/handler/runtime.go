@@ -30,11 +30,18 @@ type AgentRuntimeResponse struct {
 	// Visibility is "private" (default — only the owner / workspace admins
 	// can bind agents) or "public" (any workspace member can). See migration
 	// 083 and canUseRuntimeForAgent.
-	Visibility string  `json:"visibility"`
-	Timezone   string  `json:"timezone"`
-	LastSeenAt *string `json:"last_seen_at"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  string  `json:"updated_at"`
+	Visibility string `json:"visibility"`
+	Timezone   string `json:"timezone"`
+	// CustomEnv is the per-runtime env-var map merged over agent.custom_env
+	// at subprocess launch (see migration 096 + daemon.go merge logic). Only
+	// canEditRuntime callers see real values; everyone else sees keys with
+	// "****" so they know which vars exist without leaking secrets, and
+	// CustomEnvRedacted is true.
+	CustomEnv         map[string]string `json:"custom_env"`
+	CustomEnvRedacted bool              `json:"custom_env_redacted"`
+	LastSeenAt        *string           `json:"last_seen_at"`
+	CreatedAt         string            `json:"created_at"`
+	UpdatedAt         string            `json:"updated_at"`
 }
 
 func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
@@ -44,6 +51,13 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 	}
 	if metadata == nil {
 		metadata = map[string]any{}
+	}
+
+	customEnv := map[string]string{}
+	if rt.CustomEnv != nil {
+		if err := json.Unmarshal(rt.CustomEnv, &customEnv); err != nil {
+			slog.Warn("failed to unmarshal runtime custom_env", "runtime_id", uuidToString(rt.ID), "error", err)
+		}
 	}
 
 	return AgentRuntimeResponse{
@@ -60,10 +74,25 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 		OwnerID:      uuidToPtr(rt.OwnerID),
 		Visibility:   rt.Visibility,
 		Timezone:     rt.Timezone,
+		CustomEnv:    customEnv,
 		LastSeenAt:   timestampToPtr(rt.LastSeenAt),
 		CreatedAt:    timestampToString(rt.CreatedAt),
 		UpdatedAt:    timestampToString(rt.UpdatedAt),
 	}
+}
+
+// redactRuntimeEnv masks custom_env values in the response when the caller
+// can't edit the runtime. Keys are preserved so a workspace member binding
+// an agent to a public runtime can still see WHICH credentials it carries
+// (avoids "why did my run fail" debugging in the dark) without leaking the
+// values. Mirrors redactEnv in agent.go.
+func redactRuntimeEnv(resp *AgentRuntimeResponse) {
+	masked := make(map[string]string, len(resp.CustomEnv))
+	for k := range resp.CustomEnv {
+		masked[k] = "****"
+	}
+	resp.CustomEnv = masked
+	resp.CustomEnvRedacted = true
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +475,12 @@ type UpdateAgentRuntimeRequest struct {
 	// or workspace admins can bind agents) and "public" (any workspace
 	// member can). Owner / workspace admin only, gated by canEditRuntime.
 	Visibility *string `json:"visibility,omitempty"`
+	// CustomEnv is the per-runtime env-var map merged over agent.custom_env
+	// at subprocess launch (see migration 096). Pointer-to-map so the field
+	// is tri-state: absent on the wire = no change, present-and-empty =
+	// clear, populated = replace. Owner / workspace admin only — values are
+	// credentials, not policy, so even a public runtime restricts writes.
+	CustomEnv *map[string]string `json:"custom_env,omitempty"`
 }
 
 // UpdateAgentRuntime handles PATCH /api/runtimes/:id. Currently only the
@@ -587,7 +622,33 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, runtimeToResponse(rt))
+	// CustomEnv update — owner/admin only (already gated by canEditRuntime
+	// at the top of this handler). Replaces the whole map; partial-key edits
+	// happen client-side and submit the full new map. Empty map clears.
+	if req.CustomEnv != nil {
+		envBytes, err := json.Marshal(*req.CustomEnv)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid custom_env")
+			return
+		}
+		updated, err := h.Queries.UpdateAgentRuntimeCustomEnv(r.Context(), db.UpdateAgentRuntimeCustomEnvParams{
+			ID:        runtimeUUID,
+			CustomEnv: envBytes,
+		})
+		if err != nil {
+			slog.Error("UpdateAgentRuntimeCustomEnv failed", "error", err, "runtime_id", runtimeID)
+			writeError(w, http.StatusInternalServerError, "failed to update runtime")
+			return
+		}
+		rt = updated
+		h.publish(protocol.EventDaemonRegister, uuidToString(rt.WorkspaceID), "member", uuidToString(member.UserID), map[string]any{
+			"action": "update",
+		})
+	}
+
+	resp := runtimeToResponse(rt)
+	// Caller already passed canEditRuntime, so no redaction.
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func canEditRuntime(member db.Member, rt db.AgentRuntime) bool {
@@ -617,17 +678,18 @@ func canUseRuntimeForAgent(member db.Member, rt db.AgentRuntime) bool {
 func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 
+	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
+	if !ok {
+		return
+	}
+
 	var runtimes []db.AgentRuntime
 	var err error
 
 	if ownerFilter := r.URL.Query().Get("owner"); ownerFilter == "me" {
-		userID, ok := requireUserID(w, r)
-		if !ok {
-			return
-		}
 		runtimes, err = h.Queries.ListAgentRuntimesByOwner(r.Context(), db.ListAgentRuntimesByOwnerParams{
 			WorkspaceID: parseUUID(workspaceID),
-			OwnerID:     parseUUID(userID),
+			OwnerID:     member.UserID,
 		})
 	} else {
 		runtimes, err = h.Queries.ListAgentRuntimes(r.Context(), parseUUID(workspaceID))
@@ -641,6 +703,11 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 	resp := make([]AgentRuntimeResponse, len(runtimes))
 	for i, rt := range runtimes {
 		resp[i] = runtimeToResponse(rt)
+		// Hide secrets from non-editors. Keys still visible so callers know
+		// which env vars exist; values masked.
+		if !canEditRuntime(member, rt) {
+			redactRuntimeEnv(&resp[i])
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)

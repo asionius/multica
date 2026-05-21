@@ -128,7 +128,25 @@
     "running_chip_one": "· {{count}} running",
     "running_chip_other": "· {{count}} running",
     "queued_chip_one": "· {{count}} queued",
-    "queued_chip_other": "· {{count}} queued"
+    "queued_chip_other": "· {{count}} queued",
+    "env": {
+      "title": "Environment variables",
+      "intro": "Per-runtime env vars merged over the agent's defaults at task launch. Runtime keys win on conflict — use this to override an agent-wide ANTHROPIC_API_KEY with your own credentials.",
+      "intro_readonly": "Values are hidden because you can't edit this runtime. Keys are shown so you know which credentials it carries.",
+      "empty": "No env vars set.",
+      "empty_readonly": "No env vars set.",
+      "add": "Add",
+      "save": "Save",
+      "key_placeholder": "KEY",
+      "value_placeholder": "value",
+      "show_value_aria": "Show value",
+      "hide_value_aria": "Hide value",
+      "remove_aria": "Remove entry",
+      "duplicate_keys_toast": "Each key must be unique.",
+      "saved_toast": "Environment variables saved.",
+      "save_failed_toast": "Failed to save environment variables.",
+      "unsaved_changes": "Unsaved changes"
+    }
   },
   "detail_page": {
     "not_found_title": "Runtime not found",

@@ -47,6 +47,7 @@ import { HealthBadge } from "./shared";
 import { ProviderLogo } from "./provider-logo";
 import { UpdateSection } from "./update-section";
 import { UsageSection } from "./usage-section";
+import { EnvSection } from "./env-section";
 import { useT } from "../../i18n";
 
 function getCliVersion(metadata: Record<string, unknown>): string | null {
@@ -204,6 +205,7 @@ export function RuntimeDetail({ runtime }: { runtime: AgentRuntime }) {
               cliVersion={cliVersion}
               daemonShort={daemonShort}
             />
+            <EnvSection runtime={runtime} canEdit={!!canDelete} />
             <UsageSection runtimeId={runtime.id} />
           </div>
 

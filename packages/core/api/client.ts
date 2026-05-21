@@ -824,7 +824,12 @@ export class ApiClient {
 
   async updateRuntime(
     runtimeId: string,
-    patch: { timezone?: string; visibility?: "private" | "public" },
+    patch: {
+      timezone?: string;
+      visibility?: "private" | "public";
+      /** Per-runtime env vars (see migration 096). Empty map clears. */
+      custom_env?: Record<string, string>;
+    },
   ): Promise<AgentRuntime> {
     return this.fetch(`/api/runtimes/${runtimeId}`, {
       method: "PATCH",
