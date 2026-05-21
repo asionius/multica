@@ -414,6 +414,18 @@
     "update_failed": "更新标签失败",
     "delete_failed": "删除标签失败"
   },
+  "review": {
+    "awaitingTitle": "此议题正在等待审核",
+    "approve": "通过",
+    "requestChanges": "请求更改",
+    "sendRequest": "发送更改请求",
+    "cancel": "取消",
+    "feedbackPlaceholder": "说明需要更改的内容，以便智能体采取行动…",
+    "approvedToast": "审核已通过",
+    "approveFailedToast": "发送通过意见失败",
+    "requestSentToast": "更改请求已发送",
+    "requestFailedToast": "发送更改请求失败"
+  },
   "backlog_hint": {
     "title": "智能体在 backlog 状态下暂停",
     "description": "这个 issue 处于待规划状态，被分配的智能体会等待。准备启动时把它移到 todo。",

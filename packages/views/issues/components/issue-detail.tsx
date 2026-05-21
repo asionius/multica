@@ -50,6 +50,7 @@ import { IssueActionsDropdown, useIssueActions } from "../actions";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { CommentCard } from "./comment-card";
 import { CommentInput } from "./comment-input";
+import { ReviewActions } from "./review-actions";
 import { ResolvedThreadBar } from "./resolved-thread-bar";
 import { collectThreadReplies } from "./thread-utils";
 import { AgentLiveCard } from "./agent-live-card";
@@ -1928,6 +1929,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                   keeps the previous issue's in-memory content and the
                   next keystroke would flush it into the new issue's
                   draft key. */}
+              <ReviewActions
+                issue={issue}
+                user={user}
+                onSubmit={submitComment}
+              />
               <CommentInput key={id} issueId={id} onSubmit={submitComment} />
             </div>
           </div>

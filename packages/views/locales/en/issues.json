@@ -423,6 +423,18 @@
     "update_failed": "Failed to update label",
     "delete_failed": "Failed to delete label"
   },
+  "review": {
+    "awaitingTitle": "This issue is awaiting review",
+    "approve": "Approve",
+    "requestChanges": "Request changes",
+    "sendRequest": "Send change request",
+    "cancel": "Cancel",
+    "feedbackPlaceholder": "Explain what needs to change so the agent can act on it…",
+    "approvedToast": "Review approved",
+    "approveFailedToast": "Failed to post approval",
+    "requestSentToast": "Change request sent",
+    "requestFailedToast": "Failed to post change request"
+  },
   "backlog_hint": {
     "title": "Agent is paused in Backlog",
     "description": "This issue is parked, so the assigned agent will wait. Move it to Todo when you want the agent to start.",
