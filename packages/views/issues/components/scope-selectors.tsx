@@ -246,7 +246,7 @@ function ParentSelectorContent({
 
       <div className="max-h-80 overflow-y-auto p-1">
         <DropdownMenuItem
-          onSelect={() => onSelect(null)}
+          onClick={() => onSelect(null)}
           className="group/item"
         >
           <div
@@ -267,7 +267,7 @@ function ParentSelectorContent({
           return (
             <DropdownMenuItem
               key={issue.id}
-              onSelect={() => onSelect(issue.id)}
+              onClick={() => onSelect(issue.id)}
               className="group/item"
             >
               <div
