@@ -2455,9 +2455,58 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"timeout", execOpts.Timeout,
 	)
 
+	// rateLimitBackoffs is the wait schedule for 429 rate-limit retries.
+	// The agent is re-executed from scratch (same session resume) after each
+	// delay. Attempts beyond the schedule length give up and fail the task.
+	rateLimitBackoffs := []time.Duration{
+		30 * time.Second,
+		60 * time.Second,
+		2 * time.Minute,
+		5 * time.Minute,
+		10 * time.Minute,
+	}
+
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID)
 	if err != nil {
 		return TaskResult{}, err
+	}
+
+	// Retry on upstream 429 rate-limit errors with exponential backoff.
+	// The conversation session is intact so we resume with the same
+	// execOpts (including ResumeSessionID if set). We keep a running
+	// usage total across attempts so token accounting is not lost.
+	for attempt, backoff := range rateLimitBackoffs {
+		if result.Status == "completed" {
+			break
+		}
+		if !isRateLimitError(result.Error) {
+			break
+		}
+		wait := jitterDuration(backoff)
+		taskLog.Warn("agent hit rate limit, will retry after backoff",
+			"attempt", attempt+1,
+			"max_attempts", len(rateLimitBackoffs),
+			"backoff", wait.Round(time.Second).String(),
+			"error", result.Error,
+		)
+		accumulatedUsage := result.Usage
+		if err := sleepWithContext(ctx, wait); err != nil {
+			// Context cancelled (task cancelled or daemon shutting down).
+			taskLog.Info("rate-limit backoff interrupted", "reason", err)
+			result.Usage = mergeUsage(accumulatedUsage, result.Usage)
+			break
+		}
+		retryResult, retryTools, retryErr := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID)
+		if retryErr != nil {
+			taskLog.Error("rate-limit retry failed to start", "attempt", attempt+1, "error", retryErr)
+			return TaskResult{}, retryErr
+		}
+		tools += retryTools
+		retryResult.Usage = mergeUsage(accumulatedUsage, retryResult.Usage)
+		result = retryResult
+	}
+	if isRateLimitError(result.Error) {
+		taskLog.Warn("agent still rate-limited after all retries, giving up")
 	}
 
 	// Fallback: if session resume failed before establishing a session, retry

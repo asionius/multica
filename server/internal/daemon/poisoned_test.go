@@ -169,3 +169,56 @@ func TestClassifyPoisonedError(t *testing.T) {
 		})
 	}
 }
+
+func TestIsRateLimitError(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  string
+		want bool
+	}{
+		{
+			name: "daemon log format",
+			msg:  `429 too many requests (5027f204703f51a7cde71bdb6ac291ae/d6c9dbc9-52e9-46f1-a42b-707c9824799b)`,
+			want: true,
+		},
+		{
+			name: "anthropic sdk format",
+			msg:  `API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"Number of request tokens has exceeded your per-minute rate limit"}}`,
+			want: true,
+		},
+		{
+			name: "case insensitive",
+			msg:  `API ERROR: 429 Too Many Requests (rate_limit_error)`,
+			want: true,
+		},
+		{
+			name: "400 invalid request is not rate limit",
+			msg:  `API Error: 400 {"type":"error","error":{"type":"invalid_request_error"}}`,
+			want: false,
+		},
+		{
+			name: "429 without rate_limit or too many is not matched",
+			msg:  `tool exited with status 429`,
+			want: false,
+		},
+		{
+			name: "5xx overloaded is not rate limit",
+			msg:  `API Error: 529 {"type":"error","error":{"type":"overloaded_error"}}`,
+			want: false,
+		},
+		{
+			name: "empty",
+			msg:  ``,
+			want: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isRateLimitError(tc.msg)
+			if got != tc.want {
+				t.Fatalf("isRateLimitError(%q) = %v, want %v", tc.msg, got, tc.want)
+			}
+		})
+	}
+}

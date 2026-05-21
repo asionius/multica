@@ -98,3 +98,25 @@ func classifyPoisonedError(errMsg string) (string, bool) {
 	}
 	return "", false
 }
+
+// isRateLimitError reports whether an agent error message indicates a
+// transient upstream rate-limit (HTTP 429). These errors are safe to retry
+// after a backoff: the conversation history is intact and no fix is needed.
+//
+// Match shape: the Claude Code SDK surfaces upstream 429s verbatim, e.g.
+//
+//	429 too many requests (5027f204703f51a7cde71bdb6ac291ae/d6c9dbc9-...)
+//	API Error: 429 {"type":"error","error":{"type":"rate_limit_error",...}}
+//
+// Requiring "429" keeps the match narrow; "rate_limit" or "too many" adds
+// a second signal to avoid matching unrelated 429s from tool calls.
+func isRateLimitError(errMsg string) bool {
+	if errMsg == "" {
+		return false
+	}
+	lowered := strings.ToLower(errMsg)
+	if !strings.Contains(lowered, "429") {
+		return false
+	}
+	return strings.Contains(lowered, "rate_limit") || strings.Contains(lowered, "too many")
+}
