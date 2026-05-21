@@ -19,6 +19,7 @@ import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
 import { PageHeader } from "../../layout/page-header";
 import { IssuesHeader } from "./issues-header";
+import { ScopeSelectors } from "./scope-selectors";
 import { BoardView } from "./board-view";
 import { ListView } from "./list-view";
 import { BatchActionToolbar } from "./batch-action-toolbar";
@@ -39,6 +40,7 @@ export function IssuesPage() {
   const creatorFilters = useIssueViewStore((s) => s.creatorFilters);
   const projectFilters = useIssueViewStore((s) => s.projectFilters);
   const includeNoProject = useIssueViewStore((s) => s.includeNoProject);
+  const selectedParentIssueId = useIssueViewStore((s) => s.selectedParentIssueId);
   const labelFilters = useIssueViewStore((s) => s.labelFilters);
   const usesAssigneeBoard = viewMode === "board" && grouping === "assignee";
 
@@ -98,8 +100,8 @@ export function IssuesPage() {
   const headerIssues = usesAssigneeBoard ? assigneeIssues : scopedIssues;
 
   const issues = useMemo(
-    () => filterIssues(scopedIssues, { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, labelFilters }),
-    [scopedIssues, statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, labelFilters],
+    () => filterIssues(scopedIssues, { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, selectedParentIssueId, labelFilters }),
+    [scopedIssues, statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, selectedParentIssueId, labelFilters],
   );
 
   // Fetch sub-issue progress from the backend so counts are accurate
@@ -187,6 +189,8 @@ export function IssuesPage() {
       </PageHeader>
 
       <ViewStoreProvider store={useIssueViewStore}>
+        {/* Scope selectors: Project + Parent issue (promoted from filter menu) */}
+        <ScopeSelectors allIssues={allIssues} />
         {/* Header 2: Scope tabs + filters */}
         <IssuesHeader scopedIssues={headerIssues} />
 

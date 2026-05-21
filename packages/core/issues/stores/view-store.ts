@@ -65,6 +65,8 @@ export interface IssueViewState {
   creatorFilters: ActorFilterValue[];
   projectFilters: string[];
   includeNoProject: boolean;
+  /** Scope the issue list to a single parent issue (parent + its direct sub-issues). Null = all. */
+  selectedParentIssueId: string | null;
   labelFilters: string[];
   sortBy: SortField;
   sortDirection: SortDirection;
@@ -79,6 +81,7 @@ export interface IssueViewState {
   toggleCreatorFilter: (value: ActorFilterValue) => void;
   toggleProjectFilter: (projectId: string) => void;
   toggleNoProject: () => void;
+  setSelectedParentIssueId: (id: string | null) => void;
   toggleLabelFilter: (labelId: string) => void;
   hideStatus: (status: IssueStatus) => void;
   showStatus: (status: IssueStatus) => void;
@@ -99,6 +102,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   creatorFilters: [],
   projectFilters: [],
   includeNoProject: false,
+  selectedParentIssueId: null,
   labelFilters: [],
   sortBy: "position",
   sortDirection: "asc",
@@ -164,6 +168,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
     })),
   toggleNoProject: () =>
     set((state) => ({ includeNoProject: !state.includeNoProject })),
+  setSelectedParentIssueId: (id) => set({ selectedParentIssueId: id }),
   toggleLabelFilter: (labelId) =>
     set((state) => ({
       labelFilters: state.labelFilters.includes(labelId)
@@ -195,6 +200,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       creatorFilters: [],
       projectFilters: [],
       includeNoProject: false,
+      selectedParentIssueId: null,
       labelFilters: [],
     }),
   setSortBy: (field) => set({ sortBy: field }),
@@ -227,6 +233,7 @@ export const viewStorePersistOptions = (name: string) => ({
     creatorFilters: state.creatorFilters,
     projectFilters: state.projectFilters,
     includeNoProject: state.includeNoProject,
+    selectedParentIssueId: state.selectedParentIssueId,
     labelFilters: state.labelFilters,
     sortBy: state.sortBy,
     sortDirection: state.sortDirection,

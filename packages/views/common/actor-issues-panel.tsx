@@ -149,6 +149,7 @@ export function ActorIssuesPanel({
         creatorFilters,
         projectFilters,
         includeNoProject,
+        selectedParentIssueId: null,
         labelFilters,
       }),
     [

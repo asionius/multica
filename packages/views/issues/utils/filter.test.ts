@@ -10,6 +10,7 @@ const NO_FILTER: IssueFilters = {
   creatorFilters: [],
   projectFilters: [],
   includeNoProject: false,
+  selectedParentIssueId: null,
   labelFilters: [],
 };
 
@@ -204,5 +205,35 @@ describe("filterIssues", () => {
     // L4 (empty labels) and L5 (missing labels field) must both be filtered out.
     expect(result.map((i) => i.id)).not.toContain("L4");
     expect(result.map((i) => i.id)).not.toContain("L5");
+  });
+
+  // --- Parent issue scope ---
+  it("narrows to parent + its direct sub-issues when selectedParentIssueId is set", () => {
+    const parentAndChildren: Issue[] = [
+      makeIssue({ id: "p", parent_issue_id: null }),
+      makeIssue({ id: "c1", parent_issue_id: "p" }),
+      makeIssue({ id: "c2", parent_issue_id: "p" }),
+      makeIssue({ id: "other", parent_issue_id: null }),
+      makeIssue({ id: "other-child", parent_issue_id: "other" }),
+    ];
+    const result = filterIssues(parentAndChildren, {
+      ...NO_FILTER,
+      selectedParentIssueId: "p",
+    });
+    expect(result.map((i) => i.id).sort()).toEqual(["c1", "c2", "p"]);
+  });
+
+  it("parent-issue scope combines with other filters", () => {
+    const parentAndChildren: Issue[] = [
+      makeIssue({ id: "p", parent_issue_id: null, status: "todo" }),
+      makeIssue({ id: "c1", parent_issue_id: "p", status: "done" }),
+      makeIssue({ id: "c2", parent_issue_id: "p", status: "todo" }),
+    ];
+    const result = filterIssues(parentAndChildren, {
+      ...NO_FILTER,
+      selectedParentIssueId: "p",
+      statusFilters: ["todo"],
+    });
+    expect(result.map((i) => i.id).sort()).toEqual(["c2", "p"]);
   });
 });

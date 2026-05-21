@@ -9,6 +9,8 @@ export interface IssueFilters {
   creatorFilters: ActorFilterValue[];
   projectFilters: string[];
   includeNoProject: boolean;
+  /** When set, result = the parent itself + its direct sub-issues. Null = no parent scoping. */
+  selectedParentIssueId: string | null;
   labelFilters: string[];
 }
 
@@ -22,11 +24,18 @@ export interface IssueFilters {
  * - When both → show matching assignees + unassigned
  */
 export function filterIssues(issues: Issue[], filters: IssueFilters): Issue[] {
-  const { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, labelFilters } = filters;
+  const { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, selectedParentIssueId, labelFilters } = filters;
   const hasAssigneeFilter = assigneeFilters.length > 0 || includeNoAssignee;
   const hasProjectFilter = projectFilters.length > 0 || includeNoProject;
 
   return issues.filter((issue) => {
+    // Parent-issue scoping: keep the parent itself + its direct sub-issues.
+    if (selectedParentIssueId) {
+      if (issue.id !== selectedParentIssueId && issue.parent_issue_id !== selectedParentIssueId) {
+        return false;
+      }
+    }
+
     if (statusFilters.length > 0 && !statusFilters.includes(issue.status))
       return false;
 

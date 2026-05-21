@@ -114,6 +114,7 @@ export function MyIssuesPage() {
         creatorFilters: [],
         projectFilters: [],
         includeNoProject: false,
+        selectedParentIssueId: null,
         labelFilters: [],
       }),
     [myIssues, statusFilters, priorityFilters],
