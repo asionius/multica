@@ -1,4 +1,10 @@
 {
+  "upgrade_banner": {
+    "title": "运行时需要升级",
+    "description": "你有一个或多个本地运行时正在使用过时的 CLI 版本，请立即升级以保证智能体正常工作。",
+    "dismiss": "忽略",
+    "go_to_runtimes": "前往运行时"
+  },
   "page": {
     "title": "运行时",
     "tagline": "为智能体跑 CLI 会话的机器和云端 worker。",

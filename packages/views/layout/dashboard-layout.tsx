@@ -7,6 +7,7 @@ import { AppSidebar } from "./app-sidebar";
 import { DashboardGuard } from "./dashboard-guard";
 import { NavigationProgress } from "./navigation-progress";
 import { WorkspacePresencePrefetch } from "./workspace-presence-prefetch";
+import { RuntimeUpgradeBanner } from "./runtime-upgrade-banner";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -39,6 +40,7 @@ export function DashboardLayout({
           <NavigationProgress />
           {children}
           <ModalRegistry />
+          <RuntimeUpgradeBanner />
           {extra}
         </SidebarInset>
       </SidebarProvider>

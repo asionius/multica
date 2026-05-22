@@ -1,4 +1,10 @@
 {
+  "upgrade_banner": {
+    "title": "Runtime upgrade required",
+    "description": "One or more of your local runtimes is running an outdated CLI version. Upgrade now to keep your agents working correctly.",
+    "dismiss": "Dismiss",
+    "go_to_runtimes": "Go to Runtimes"
+  },
   "page": {
     "title": "Runtimes",
     "tagline": "Machines and cloud workers running CLI sessions for your agents.",
