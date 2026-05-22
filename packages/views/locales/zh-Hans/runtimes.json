@@ -1,7 +1,9 @@
 {
   "upgrade_banner": {
     "title": "运行时需要升级",
-    "description": "你有一个或多个本地运行时正在使用过时的 CLI 版本，请立即升级以保证智能体正常工作。",
+    "description": "你有一个或多个本地运行时正在使用过时的 CLI 版本，请在对应机器上执行以下命令进行升级。",
+    "install_step": "在每台机器上执行以下命令升级：",
+    "copy_command": "复制命令",
     "dismiss": "忽略",
     "go_to_runtimes": "前往运行时"
   },
