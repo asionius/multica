@@ -5,6 +5,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "../hooks";
 import { memberListOptions, agentListOptions, squadListOptions } from "./queries";
 
+/** Returns the avatar URL for a workspace member based on their email prefix. */
+export function memberAvatarUrl(email: string): string {
+  const username = email.split("@")[0];
+  return `https://r.hrc.woa.com/photo/150/${username}.png`;
+}
+
 export function useActorName() {
   const wsId = useWorkspaceId();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
@@ -45,7 +51,10 @@ export function useActorName() {
   }, [getActorName]);
 
   const getActorAvatarUrl = useCallback((type: string, id: string): string | null => {
-    if (type === "member") return members.find((m) => m.user_id === id)?.avatar_url ?? null;
+    if (type === "member") {
+      const m = members.find((m) => m.user_id === id);
+      return m ? memberAvatarUrl(m.email) : null;
+    }
     if (type === "agent") return agents.find((a) => a.id === id)?.avatar_url ?? null;
     if (type === "squad") return squads.find((s) => s.id === id)?.avatar_url ?? null;
     return null;
