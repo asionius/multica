@@ -2243,17 +2243,18 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Trigger the assigned agent when ANY actor (member or agent) moves an
-	// issue out of backlog. Backlog acts as a parking lot — moving to an
-	// active status signals the issue is ready for work.
+	// issue into `todo` — the universal "ready for work" signal. This covers:
+	//   - backlog → todo:    initial kickoff (parking lot exit)
+	//   - done → todo:       downstream agent reopened upstream (Ping-pong bounce-back)
+	//   - cancelled → todo:  manual reactivation
+	//   - blocked → todo:    unblock by human / next-agent
+	//   - in_review → todo:  reviewer asked for rework
 	//
-	// Note we deliberately accept agent actors here too: this is the canonical
-	// hand-off path in multi-stage pipelines (e.g. pipeline-initializer flips
-	// the requirement sub-issue to `todo`; designer flips coder; coder flips
-	// tester; etc.). Restricting to `actorType == "member"` would force a
-	// human in the loop on every stage transition, which defeats the whole
-	// agent-to-agent design.
-	if statusChanged && !assigneeChanged &&
-		prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" {
+	// Agent actors are accepted here too: this is the canonical hand-off path
+	// in multi-stage pipelines (e.g. tester FAILs back to coder by setting
+	// coder.status → todo). Restricting to member-only would silently break
+	// those flows.
+	if statusChanged && !assigneeChanged && issue.Status == "todo" {
 		if h.isAgentAssigneeReady(r.Context(), issue) {
 			h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
 		}
@@ -2665,11 +2666,10 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Trigger agent when ANY actor moves an issue out of backlog (batch).
-		// Mirrors the single-issue UpdateIssue path; agent actors are accepted
-		// to support pipeline hand-offs (see UpdateIssue comment for context).
-		if statusChanged && !assigneeChanged &&
-			prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" {
+		// Trigger agent when an issue enters `todo` (batch). Mirrors the
+		// single-issue UpdateIssue path; agent actors are accepted to support
+		// pipeline hand-offs (see UpdateIssue comment for context).
+		if statusChanged && !assigneeChanged && issue.Status == "todo" {
 			if h.isAgentAssigneeReady(r.Context(), issue) {
 				h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
 			}
