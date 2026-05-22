@@ -13,6 +13,7 @@
   "delete_issue": {
     "title": "删除 issue",
     "description": "将永久删除该 issue 及其所有评论。此操作不可撤销。",
+    "description_with_children": "将永久删除该 issue、所有子 issue（{{count}} 个）及其评论。此操作不可撤销。",
     "hint": "工作区任何成员都可以删除 issue。",
     "cancel": "取消",
     "confirm": "删除",

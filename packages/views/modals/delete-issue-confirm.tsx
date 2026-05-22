@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -13,6 +14,8 @@ import {
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
 import { useDeleteIssue } from "@multica/core/issues/mutations";
+import { childIssuesOptions } from "@multica/core/issues/queries";
+import { useWorkspaceId } from "@multica/core/hooks";
 import { useNavigation } from "../navigation";
 import { useT } from "../i18n";
 
@@ -29,6 +32,13 @@ export function DeleteIssueConfirmModal({
   const [deleting, setDeleting] = useState(false);
   const deleteIssue = useDeleteIssue();
   const navigation = useNavigation();
+  const wsId = useWorkspaceId();
+
+  const { data: children } = useQuery({
+    ...childIssuesOptions(wsId, issueId),
+    enabled: !!issueId,
+  });
+  const childCount = children?.length ?? 0;
 
   const handleDelete = async () => {
     if (!issueId) return;
@@ -54,7 +64,9 @@ export function DeleteIssueConfirmModal({
         <AlertDialogHeader>
           <AlertDialogTitle>{t(($) => $.delete_issue.title)}</AlertDialogTitle>
           <AlertDialogDescription>
-            {t(($) => $.delete_issue.description)}
+            {childCount > 0
+              ? t(($) => $.delete_issue.description_with_children).replace("{{count}}", String(childCount))
+              : t(($) => $.delete_issue.description)}
             <span className="mt-2 block text-xs text-muted-foreground/80">
               {t(($) => $.delete_issue.hint)}
             </span>

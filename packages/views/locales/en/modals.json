@@ -13,6 +13,7 @@
   "delete_issue": {
     "title": "Delete issue",
     "description": "This will permanently delete this issue and all its comments. This action cannot be undone.",
+    "description_with_children": "This will permanently delete this issue, all its sub-issues ({{count}}), and all comments. This action cannot be undone.",
     "hint": "Any workspace member can delete issues.",
     "cancel": "Cancel",
     "confirm": "Delete",

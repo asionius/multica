@@ -2411,6 +2411,34 @@ func (h *Handler) isAgentAssigneeReady(ctx context.Context, issue db.Issue) bool
 	return true
 }
 
+// deleteIssueRecursive deletes an issue and all its descendants (DFS).
+// For each issue it cancels active tasks, fails autopilot runs, cleans up S3
+// attachments, deletes the row, and publishes an EventIssueDeleted WS event.
+func (h *Handler) deleteIssueRecursive(ctx context.Context, issue db.Issue, wsID, actorType, actorID string) error {
+	// Recurse into children first so that by the time we delete the parent
+	// their parent_issue_id FK (ON DELETE SET NULL) has already been cleared
+	// by their own deletion — avoids any ordering surprises.
+	children, _ := h.Queries.ListChildIssues(ctx, issue.ID)
+	for _, child := range children {
+		if err := h.deleteIssueRecursive(ctx, child, wsID, actorType, actorID); err != nil {
+			return err
+		}
+	}
+
+	h.TaskService.CancelTasksForIssue(ctx, issue.ID)
+	h.Queries.FailAutopilotRunsByIssue(ctx, issue.ID) //nolint:errcheck
+
+	attachmentURLs, _ := h.Queries.ListAttachmentURLsByIssueOrComments(ctx, issue.ID)
+
+	if err := h.Queries.DeleteIssue(ctx, issue.ID); err != nil {
+		return err
+	}
+
+	h.deleteS3Objects(ctx, attachmentURLs)
+	h.publish(protocol.EventIssueDeleted, wsID, actorType, actorID, map[string]any{"issue_id": uuidToString(issue.ID)})
+	return nil
+}
+
 func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, id)
@@ -2418,28 +2446,16 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
-	// Fail any linked autopilot runs before delete (ON DELETE SET NULL clears issue_id).
-	h.Queries.FailAutopilotRunsByIssue(r.Context(), issue.ID)
+	userID := requestUserID(r)
+	wsID := uuidToString(issue.WorkspaceID)
+	actorType, actorID := h.resolveActor(r, userID, wsID)
 
-	// Collect all attachment URLs (issue-level + comment-level) before CASCADE delete.
-	attachmentURLs, _ := h.Queries.ListAttachmentURLsByIssueOrComments(r.Context(), issue.ID)
-
-	err := h.Queries.DeleteIssue(r.Context(), issue.ID)
-	if err != nil {
+	if err := h.deleteIssueRecursive(r.Context(), issue, wsID, actorType, actorID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete issue")
 		return
 	}
 
-	h.deleteS3Objects(r.Context(), attachmentURLs)
-	userID := requestUserID(r)
-	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
-	// Always emit the resolved UUID — frontend caches key by UUID, so an
-	// identifier-style payload ("MUL-123") would leave stale entries on
-	// other clients after an identifier-path delete.
-	resolvedID := uuidToString(issue.ID)
-	h.publish(protocol.EventIssueDeleted, uuidToString(issue.WorkspaceID), actorType, actorID, map[string]any{"issue_id": resolvedID})
-	slog.Info("issue deleted", append(logger.RequestAttrs(r), "issue_id", resolvedID, "workspace_id", uuidToString(issue.WorkspaceID))...)
+	slog.Info("issue deleted", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "workspace_id", wsID)...)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -2738,6 +2754,7 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deleted := 0
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	for _, issueID := range req.IssueIDs {
 		issueUUID, err := util.ParseUUID(issueID)
 		if err != nil {
@@ -2751,22 +2768,10 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
-		h.Queries.FailAutopilotRunsByIssue(r.Context(), issue.ID)
-
-		// Collect attachment URLs before CASCADE delete to clean up S3 objects.
-		attachmentURLs, _ := h.Queries.ListAttachmentURLsByIssueOrComments(r.Context(), issue.ID)
-
-		if err := h.Queries.DeleteIssue(r.Context(), issue.ID); err != nil {
+		if err := h.deleteIssueRecursive(r.Context(), issue, workspaceID, actorType, actorID); err != nil {
 			slog.Warn("batch delete issue failed", "issue_id", issueID, "error", err)
 			continue
 		}
-
-		h.deleteS3Objects(r.Context(), attachmentURLs)
-
-		// Always emit the resolved UUID — frontend caches key by UUID.
-		actorType, actorID := h.resolveActor(r, userID, workspaceID)
-		h.publish(protocol.EventIssueDeleted, workspaceID, actorType, actorID, map[string]any{"issue_id": uuidToString(issue.ID)})
 		deleted++
 	}
 
