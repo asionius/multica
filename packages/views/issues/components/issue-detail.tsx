@@ -950,7 +950,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const { data: parentIssue = null } = useQuery({
     ...issueDetailOptions(wsId, parentIssueId ?? ""),
     enabled: !!parentIssueId,
-    initialData: () => allIssues.find((i) => i.id === parentIssueId),
+    // Only seed from list cache when description is present. List API omits
+    // description (returns null), and seeding a null-description row into the
+    // detail cache makes ContentEditor mount with defaultValue="" and stay
+    // stuck at the placeholder even after the real fetch returns — because
+    // ContentEditor only reads defaultValue on mount. Mirrors the same guard
+    // on the main issue query above.
+    initialData: () => {
+      const cached = allIssues.find((i) => i.id === parentIssueId);
+      return cached?.description != null ? cached : undefined;
+    },
   });
   const { data: childIssues = [] } = useQuery({
     ...childIssuesOptions(wsId, id),
