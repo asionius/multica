@@ -1823,6 +1823,27 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		originID = oid
 	}
 
+	// Quick-create top-level issue: attribute creator to the human requester,
+	// not the agent. origin_id == agent_task_queue.id; look up its context
+	// JSONB to find the RequesterID that was stored when the task was enqueued.
+	// Only applies to top-level issues (no parent) — sub-issues are unaffected.
+	// Failure is silent: if the task or requester can't be resolved we fall
+	// through and keep the agent as creator.
+	if originType.Valid && originType.String == "quick_create" && !parentIssueID.Valid {
+		if task, err := h.Queries.GetAgentTask(r.Context(), originID); err == nil && task.Context != nil {
+			var qc struct {
+				Type        string `json:"type"`
+				RequesterID string `json:"requester_id"`
+			}
+			if json.Unmarshal(task.Context, &qc) == nil && qc.Type == "quick_create" && qc.RequesterID != "" {
+				if _, parseErr := util.ParseUUID(qc.RequesterID); parseErr == nil {
+					creatorType = "member"
+					actualCreatorID = qc.RequesterID
+				}
+			}
+		}
+	}
+
 	var issue db.Issue
 	if originType.Valid {
 		issue, err = qtx.CreateIssueWithOrigin(r.Context(), db.CreateIssueWithOriginParams{
