@@ -59,7 +59,10 @@ export function buildWorkloadIndex(
     result.set(a.runtime_id, entry);
   }
   for (const t of tasks) {
-    const rid = agentToRuntime.get(t.agent_id);
+    // Prefer the task's own runtime_id (set when the issue pins a specific
+    // runtime that differs from the agent's default). Fall back to the
+    // agent's default runtime so non-pinned tasks still show up.
+    const rid = t.runtime_id ?? agentToRuntime.get(t.agent_id);
     if (!rid) continue;
     const entry = result.get(rid);
     if (!entry) continue;
