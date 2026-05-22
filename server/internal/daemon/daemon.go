@@ -2459,11 +2459,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// The agent is re-executed from scratch (same session resume) after each
 	// delay. Attempts beyond the schedule length give up and fail the task.
 	rateLimitBackoffs := []time.Duration{
+		10 * time.Second,
 		30 * time.Second,
 		60 * time.Second,
+		time.Minute,
 		2 * time.Minute,
-		5 * time.Minute,
-		10 * time.Minute,
 	}
 
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID)
