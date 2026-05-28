@@ -1046,6 +1046,21 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Re-enqueue an issue's task while preserving the prior agent session, so
+   * the agent continues mid-conversation instead of starting over. Use when
+   * a long task aborted mid-stream (e.g. upstream model error) and you want
+   * to pick up at the last tool result. Use {@link rerunIssue} instead when
+   * the prior output was bad and you want a clean slate. Server-side this
+   * sets force_fresh_session=false so the daemon's claim path resumes the
+   * last clean session id via --resume.
+   */
+  async resumeIssue(issueId: string): Promise<AgentTask> {
+    return this.fetch(`/api/issues/${issueId}/resume`, {
+      method: "POST",
+    });
+  }
+
   // Inbox
   async listInbox(): Promise<InboxItem[]> {
     return this.fetch("/api/inbox");

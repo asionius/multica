@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Loader2, RotateCcw, Square } from "lucide-react";
+import { ChevronRight, Loader2, PlayCircle, RotateCcw, Square } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
@@ -338,6 +338,7 @@ function ActiveRow({ task, issueId }: { task: AgentTask; issueId: string }) {
 function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   const { t } = useT("issues");
   const [retrying, setRetrying] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const tone = STATUS_TONE[task.status];
   const label = useStatusLabel(task.status);
   const trigger = useTriggerText(task);
@@ -352,6 +353,14 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   // (not necessarily this row's agent) — clicking retry on a row whose
   // agent has since been reassigned will rerun under the new assignee.
   const canRetry = task.status === "failed" || task.status === "cancelled";
+  // Resume continues the prior agent session via --resume <session-id>.
+  // Also offered on `completed` because the daemon's gotResultFrame
+  // detector is recent — old "completed" rows may actually be aborted
+  // upstream-error sessions misclassified as completed (e.g. multica
+  // issues cab5f111 / eb6736e0). The server returns an explicit error
+  // if no resumable session exists.
+  const canResume =
+    task.status === "failed" || task.status === "cancelled" || task.status === "completed";
 
   const handleRetry = async () => {
     if (retrying) return;
@@ -368,6 +377,18 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
     }
   };
 
+  const handleResume = async () => {
+    if (resuming) return;
+    setResuming(true);
+    try {
+      await api.resumeIssue(issueId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t(($) => $.execution_log.resume_failed));
+    } finally {
+      setResuming(false);
+    }
+  };
+
   return (
     <RowShell task={task}>
       <TriggerText text={trigger} />
@@ -377,6 +398,28 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
       </span>
       <RowActions>
         <TranscriptButton task={task} agentName="" title={t(($) => $.execution_log.transcript_tooltip)} />
+        {canResume && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  onClick={handleResume}
+                  disabled={resuming}
+                  aria-label={t(($) => $.execution_log.resume_task_aria)}
+                />
+              }
+              className="flex items-center justify-center rounded p-1 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {resuming ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <PlayCircle className="h-3.5 w-3.5" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent>{t(($) => $.execution_log.resume_task_tooltip)}</TooltipContent>
+          </Tooltip>
+        )}
         {canRetry && (
           <Tooltip>
             <TooltipTrigger

@@ -91,6 +91,16 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		var sessionID string
 		finalStatus := "completed"
 		var finalError string
+		var failureReason string
+		// gotResultFrame tracks whether codebuddy CLI emitted a terminal
+		// stream-json `result` frame. A successful run always emits one;
+		// a mid-stream upstream error (e.g. provider returns
+		// finish_reason="error" with empty output) leaves the CLI in an
+		// "Aborting session" state but the process still exits with
+		// code 0 and no result frame. Without this guard the daemon
+		// would default finalStatus to "completed" and silently drop
+		// the failure. See multica#cab5f111 / #eb6736e0.
+		gotResultFrame := false
 		usage := make(map[string]TokenUsage)
 
 		// Close stdout when the context is cancelled so scanner.Scan() unblocks.
@@ -125,6 +135,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 				trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
 			case "result":
 				closeStdin()
+				gotResultFrame = true
 				sessionID = msg.SessionID
 				if msg.ResultText != "" {
 					output.Reset()
@@ -158,17 +169,29 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		} else if exitErr != nil && finalStatus == "completed" {
 			finalStatus = "failed"
 			finalError = fmt.Sprintf("codebuddy exited with error: %v", exitErr)
+		} else if !gotResultFrame && finalStatus == "completed" {
+			// CLI exited cleanly (code 0) without emitting a terminal
+			// result frame. The agent did not finish its turn — most
+			// commonly because the upstream model service returned an
+			// error mid-stream (finish_reason="error" with empty body)
+			// and codebuddy CLI logged "Aborting session" then exited 0.
+			// Mark this as failed so the auto-retry path can pick it up
+			// and resume the prior session.
+			finalStatus = "failed"
+			failureReason = "upstream_error"
+			finalError = "codebuddy exited without emitting a result frame (likely upstream model error or session abort)"
 		}
 
 		b.cfg.Logger.Info("codebuddy finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
 
 		resCh <- Result{
-			Status:     finalStatus,
-			Output:     output.String(),
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionID,
-			Usage:      usage,
+			Status:        finalStatus,
+			Output:        output.String(),
+			Error:         finalError,
+			DurationMs:    duration.Milliseconds(),
+			SessionID:     sessionID,
+			Usage:         usage,
+			FailureReason: failureReason,
 		}
 	}()
 

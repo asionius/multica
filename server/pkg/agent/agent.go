@@ -88,6 +88,12 @@ type Result struct {
 	DurationMs int64
 	SessionID  string
 	Usage      map[string]TokenUsage // keyed by model name
+	// FailureReason is a machine-readable hint for the daemon to classify
+	// failures. When set, the daemon prefers it over its own fallback
+	// ("agent_error"). Known values: "upstream_error" (CLI exited without
+	// emitting a terminal result frame, e.g. provider returned
+	// finish_reason=error mid-stream).
+	FailureReason string
 }
 
 // Config configures a Backend instance.

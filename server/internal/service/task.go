@@ -1258,6 +1258,13 @@ var retryableReasons = map[string]bool{
 	"runtime_offline":  true,
 	"runtime_recovery": true,
 	"timeout":          true,
+	// upstream_error: codebuddy CLI / claude CLI exited cleanly without a
+	// terminal result frame, typically because the upstream model gateway
+	// returned finish_reason="error" with an empty body mid-stream. The
+	// session is intact and resumable, so retry continues from the prior
+	// session id (not a fresh session). See codebuddy.go's gotResultFrame
+	// detector and multica#cab5f111 / #eb6736e0.
+	"upstream_error": true,
 }
 
 // MaybeRetryFailedTask spawns a fresh queued attempt for a recently-failed
@@ -1397,6 +1404,67 @@ func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agen
 		return s.enqueueIssueTask(ctx, issue, triggerCommentID, true)
 	}
 	return s.EnqueueTaskForSquadLeader(ctx, issue, agentID, triggerCommentID)
+}
+
+// ResumeIssue is the manual sibling of RerunIssue, but preserves the prior
+// agent session so the agent continues from where it stopped instead of
+// starting over. The new task is enqueued with force_fresh_session=false:
+// the daemon's claim handler will then look up the most recent clean
+// session_id via GetLastTaskSession and pass --resume <id> to the agent
+// CLI.
+//
+// Use case: a long-running task was prematurely failed (e.g. by an upstream
+// gateway returning finish_reason="error" mid-stream — see codebuddy.go's
+// gotResultFrame detector) and the user wants to continue from the last
+// tool result rather than redo dozens of steps. RerunIssue would discard
+// the session; ResumeIssue keeps it.
+//
+// squad-assigned issues are not supported here — squad session semantics
+// involve leader/follower coordination that doesn't compose with single-
+// session resume. Callers must use RerunIssue for squad issues.
+func (s *TaskService) ResumeIssue(ctx context.Context, issueID pgtype.UUID, triggerCommentID pgtype.UUID) (*db.AgentTaskQueue, error) {
+	issue, err := s.Queries.GetIssue(ctx, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("load issue: %w", err)
+	}
+
+	if issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
+		return nil, fmt.Errorf("resume is only supported for agent-assigned issues; use rerun for squad or unassigned issues")
+	}
+	agentID := issue.AssigneeID
+
+	// Cancel only the target agent's active/queued tasks on this issue.
+	cancelled, err := s.Queries.CancelAgentTasksByIssueAndAgent(ctx, db.CancelAgentTasksByIssueAndAgentParams{
+		IssueID: issueID,
+		AgentID: agentID,
+	})
+	if err != nil {
+		slog.Warn("resume: cancel prior tasks failed",
+			"issue_id", util.UUIDToString(issueID),
+			"agent_id", util.UUIDToString(agentID),
+			"error", err,
+		)
+	}
+	for _, t := range cancelled {
+		s.captureTaskCancelled(ctx, t)
+		s.ReconcileAgentStatus(ctx, t.AgentID)
+		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
+	}
+
+	// force_fresh_session=false (the third arg) — daemon's claim path will
+	// look up the most recent clean session_id via GetLastTaskSession and
+	// pass --resume to the agent CLI.
+	task, err := s.enqueueIssueTask(ctx, issue, triggerCommentID, false)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("issue resume enqueued",
+		"task_id", util.UUIDToString(task.ID),
+		"issue_id", util.UUIDToString(issueID),
+		"agent_id", util.UUIDToString(agentID),
+		"cancelled_prior", len(cancelled),
+	)
+	return &task, nil
 }
 
 // HandleFailedTasks runs the post-failure side effects for a batch of

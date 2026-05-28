@@ -207,6 +207,16 @@ var issueRerunCmd = &cobra.Command{
 	RunE:  runIssueRerun,
 }
 
+var issueResumeCmd = &cobra.Command{
+	Use:   "resume <id>",
+	Short: "Re-enqueue an issue's task, resuming the prior agent session (continues mid-conversation instead of starting fresh)",
+	Long: "Like `rerun`, but the new task inherits the previous agent session id so the agent continues from where it stopped. " +
+		"Use this when an upstream model error or transient failure aborted a long task — resume picks up at the last tool result. " +
+		"Use `rerun` instead when the prior output was bad and you want a clean slate. Only supported for agent-assigned issues.",
+	Args: exactArgs(1),
+	RunE: runIssueResume,
+}
+
 var issueCancelTaskCmd = &cobra.Command{
 	Use:   "cancel-task <task-id>",
 	Short: "Cancel a running or queued task (interrupts in-flight agent)",
@@ -265,6 +275,7 @@ func init() {
 	issueCmd.AddCommand(issueRunsCmd)
 	issueCmd.AddCommand(issueRunMessagesCmd)
 	issueCmd.AddCommand(issueRerunCmd)
+	issueCmd.AddCommand(issueResumeCmd)
 	issueCmd.AddCommand(issueCancelTaskCmd)
 	issueCmd.AddCommand(issueSearchCmd)
 	issueCmd.AddCommand(issueUsageCmd)
@@ -359,6 +370,8 @@ func init() {
 
 	// issue rerun
 	issueRerunCmd.Flags().String("output", "json", "Output format: table or json")
+	// issue resume
+	issueResumeCmd.Flags().String("output", "json", "Output format: table or json")
 	// issue cancel-task
 	issueCancelTaskCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCancelTaskCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
@@ -1330,6 +1343,34 @@ func runIssueRerun(cmd *cobra.Command, args []string) error {
 	}
 	agent := loadActorDisplayLookup(ctx, client).agent(strVal(task, "agent_id"))
 	fmt.Fprintf(os.Stdout, "Re-enqueued task %s on agent %s\n", strVal(task, "id"), agent)
+	return nil
+}
+
+func runIssueResume(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+
+	var task map[string]any
+	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/resume", map[string]any{}, &task); err != nil {
+		return fmt.Errorf("resume issue: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, task)
+	}
+	agent := loadActorDisplayLookup(ctx, client).agent(strVal(task, "agent_id"))
+	fmt.Fprintf(os.Stdout, "Resumed task %s on agent %s (continuing prior session)\n", strVal(task, "id"), agent)
 	return nil
 }
 

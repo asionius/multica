@@ -2676,6 +2676,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				"failure_reason", failureReason,
 			)
 		}
+		// Backend-supplied FailureReason wins over the classifier when set.
+		// Today this is used by the codebuddy backend's "missing result frame"
+		// path to flag upstream model errors (e.g. provider returned
+		// finish_reason="error" with empty body) so the auto-retry path
+		// (retryableReasons["upstream_error"]) can resume the prior session.
+		// Don't overwrite a poisoned classification — those are deliberately
+		// excluded from resume by GetLastTaskSession.
+		if result.FailureReason != "" && failureReason == "" {
+			failureReason = result.FailureReason
+			taskLog.Info("agent backend reported failure_reason", "failure_reason", failureReason)
+		}
 		return TaskResult{
 			Status:        "blocked",
 			Comment:       errMsg,

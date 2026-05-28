@@ -117,3 +117,28 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusAccepted, taskToResponse(*task))
 }
+
+// ResumeIssue is the manual sibling of RerunIssue: it cancels the issue's
+// active task and enqueues a fresh one with force_fresh_session=false, so
+// the daemon's claim handler will resume the prior agent session via
+// --resume <id>. Use case: a long-running task aborted mid-stream (e.g.
+// upstream model returned finish_reason="error") and the user wants to
+// continue from the last tool result rather than replay everything.
+//
+// Only supported for agent-assigned issues — squad sessions don't compose
+// cleanly with single-session resume.
+func (h *Handler) ResumeIssue(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	issue, ok := h.loadIssueForUser(w, r, id)
+	if !ok {
+		return
+	}
+
+	task, err := h.TaskService.ResumeIssue(r.Context(), issue.ID, pgtype.UUID{})
+	if err != nil {
+		slog.Warn("issue resume failed", "issue_id", id, "error", err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, taskToResponse(*task))
+}
