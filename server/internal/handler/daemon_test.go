@@ -2336,6 +2336,14 @@ func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
 		t.Fatalf("runtime match: expected PriorWorkDir='/tmp/same-runtime-workdir', got %q", task.PriorWorkDir)
 	}
 
+	// Comment-triggered task on a runtime that matches the prior task's runtime
+	// must reuse the prior session_id. Prior to migration 097 this case was
+	// blocked (TriggerCommentID.Valid suppressed PriorSessionID) to avoid
+	// inheriting stale "Done." final messages, but blocking session reuse
+	// also broke the prefix prompt cache across pipeline ping-pongs (each
+	// comment trigger paid full re-ingest cost). We now keep the session
+	// alive — the CLI appends the new human comment as a fresh user turn,
+	// not a replay of the prior assistant message.
 	var commentIssueID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
@@ -2375,8 +2383,8 @@ func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
 	}
 
 	task = claimTaskForRuntimeGuard(t, runtimeID, daemonID)
-	if task.PriorSessionID != "" {
-		t.Fatalf("comment trigger: expected empty PriorSessionID, got %q", task.PriorSessionID)
+	if task.PriorSessionID != "comment-prior-session" {
+		t.Fatalf("comment trigger: expected PriorSessionID='comment-prior-session' (session reuse keeps prefix prompt cache warm across pipeline ping-pongs), got %q", task.PriorSessionID)
 	}
 	if task.PriorWorkDir != "/tmp/comment-prior-workdir" {
 		t.Fatalf("comment trigger: expected PriorWorkDir='/tmp/comment-prior-workdir', got %q", task.PriorWorkDir)

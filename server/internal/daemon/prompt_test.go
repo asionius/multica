@@ -218,3 +218,195 @@ func TestBuildPromptNonSquadLeaderNoRule(t *testing.T) {
 		t.Errorf("buildCommentPrompt must NOT inject squad leader no_action rule for non-squad-leader agents, got:\n%s", out)
 	}
 }
+
+// TestRenderPipelineStateLegacy locks in that legacy issues (kind = "")
+// get an empty render. The agent's description-parse fallback handles
+// those — injecting an empty header would just confuse the prompt.
+func TestRenderPipelineStateLegacy(t *testing.T) {
+	out := renderPipelineState(Task{IssueID: "issue-123"})
+	if out != "" {
+		t.Errorf("legacy issues (no pipeline_kind) must render empty, got:\n%s", out)
+	}
+}
+
+// TestRenderPipelineStateMiddleStage exercises the most common path:
+// a designer (middle of the 5-stage pipeline) ping-ponging with a
+// non-zero counter. The output must surface role/prev/next/parent and
+// the dynamic counters so the agent can read them off the header
+// instead of shelling out to `multica issue pipeline get`.
+func TestRenderPipelineStateMiddleStage(t *testing.T) {
+	base := `{
+        "siblings": [
+            {"role":"requirement","id":"id-req"},
+            {"role":"designer","id":"id-dsn"},
+            {"role":"coder","id":"id-cdr"},
+            {"role":"tester","id":"id-tst"},
+            {"role":"integrator","id":"id-int"}
+        ],
+        "top_issue_id": "id-top",
+        "version": "v1.2.3",
+        "branch": "v1.2.3/abc",
+        "bounce_cap": 5
+    }`
+	dyn := `{"bounce_with_prev":1,"bounce_with_next":0,"escalated":false}`
+	task := Task{
+		IssueID:         "id-dsn",
+		PipelineKind:    "ccproc-stage",
+		PipelineBase:    []byte(base),
+		PipelineDynamic: []byte(dyn),
+		Agent:           &AgentData{Name: "CC-designer"},
+	}
+	out := renderPipelineState(task)
+
+	mustContain := []string{
+		"pipeline_kind: ccproc-stage",
+		"role: designer",
+		"prev_id: id-req",
+		"next_id: id-cdr",
+		"parent_id: id-top",
+		"version: v1.2.3",
+		"branch: v1.2.3/abc",
+		"bounce_cap: 5",
+		"dynamic.bounce_with_prev: 1",
+		"dynamic.bounce_with_next: 0",
+		"dynamic.escalated: false",
+		"multica issue pipeline set id-dsn --dynamic",
+		"NEVER 调用 `multica issue pipeline get`",
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(out, want) {
+			t.Errorf("middle-stage render missing %q, got:\n%s", want, out)
+		}
+	}
+}
+
+// TestRenderPipelineStateBoundaries verifies the prev/next pointers go
+// empty at the start (requirement) and end (integrator) of the pipeline
+// instead of wrapping or pointing at a sibling that doesn't exist.
+func TestRenderPipelineStateBoundaries(t *testing.T) {
+	base := `{
+        "siblings": [
+            {"role":"requirement","id":"id-req"},
+            {"role":"designer","id":"id-dsn"},
+            {"role":"integrator","id":"id-int"}
+        ],
+        "top_issue_id": "id-top",
+        "version": "v1.0.0",
+        "branch": "v1.0.0/x",
+        "bounce_cap": 3
+    }`
+	// First stage: prev should be empty.
+	first := renderPipelineState(Task{
+		IssueID:      "id-req",
+		PipelineKind: "ccproc-stage",
+		PipelineBase: []byte(base),
+		Agent:        &AgentData{Name: "CC-requirement"},
+	})
+	if !strings.Contains(first, "prev_id: \n") {
+		t.Errorf("first stage must render empty prev_id, got:\n%s", first)
+	}
+	if !strings.Contains(first, "next_id: id-dsn") {
+		t.Errorf("first stage next_id wrong, got:\n%s", first)
+	}
+	// Last stage: next should be empty.
+	last := renderPipelineState(Task{
+		IssueID:      "id-int",
+		PipelineKind: "ccproc-stage",
+		PipelineBase: []byte(base),
+		Agent:        &AgentData{Name: "CC-integrator"},
+	})
+	if !strings.Contains(last, "next_id: \n") {
+		t.Errorf("last stage must render empty next_id, got:\n%s", last)
+	}
+	if !strings.Contains(last, "prev_id: id-dsn") {
+		t.Errorf("last stage prev_id wrong, got:\n%s", last)
+	}
+}
+
+// TestRenderPipelineStateTopAndPackager covers the two non-stage kinds
+// (top and packager): they don't have a siblings array, so the
+// role/prev/next lines should be omitted, but version/branch/bounce_cap
+// still surface from base. The dynamic block is empty by design — top
+// and packager don't ping-pong — so no dynamic lines appear.
+func TestRenderPipelineStateTopAndPackager(t *testing.T) {
+	for _, kind := range []string{"ccproc-top", "ccproc-packager"} {
+		base := `{"version":"v9.9.9","branch":"v9.9.9/zzz","bounce_cap":7}`
+		out := renderPipelineState(Task{
+			IssueID:      "id-anything",
+			PipelineKind: kind,
+			PipelineBase: []byte(base),
+		})
+		if !strings.Contains(out, "pipeline_kind: "+kind) {
+			t.Errorf("%s render missing pipeline_kind line:\n%s", kind, out)
+		}
+		if strings.Contains(out, "role:") || strings.Contains(out, "prev_id:") || strings.Contains(out, "next_id:") {
+			t.Errorf("%s render must NOT include role/prev/next lines:\n%s", kind, out)
+		}
+		for _, want := range []string{"version: v9.9.9", "branch: v9.9.9/zzz", "bounce_cap: 7"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s render missing %q:\n%s", kind, want, out)
+			}
+		}
+	}
+}
+
+// TestRenderPipelineStateExposesAllSiblings verifies the renderer
+// surfaces every sibling by role, not just the immediate prev/next.
+// Tester / integrator need this to peek across multiple stages
+// (e.g. tester reads requirement+designer+coder outputs) without
+// shelling back to the CLI.
+func TestRenderPipelineStateExposesAllSiblings(t *testing.T) {
+	base := `{
+        "siblings": [
+            {"role":"requirement","id":"id-req"},
+            {"role":"designer","id":"id-dsn"},
+            {"role":"coder","id":"id-cdr"},
+            {"role":"tester","id":"id-tst"},
+            {"role":"integrator","id":"id-int"}
+        ],
+        "top_issue_id": "id-top",
+        "version": "v1.0.0",
+        "branch": "v1.0.0/x",
+        "bounce_cap": 3
+    }`
+	out := renderPipelineState(Task{
+		IssueID:      "id-tst",
+		PipelineKind: "ccproc-stage",
+		PipelineBase: []byte(base),
+		Agent:        &AgentData{Name: "CC-tester"},
+	})
+	for _, want := range []string{
+		"siblings.requirement: id-req",
+		"siblings.designer: id-dsn",
+		"siblings.coder: id-cdr",
+		"siblings.tester: id-tst",
+		"siblings.integrator: id-int",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("render missing %q (multi-upstream consumers need every sibling), got:\n%s", want, out)
+		}
+	}
+}
+
+// TestBuildPromptInjectsPipelineForCommentTask verifies the comment
+// path also gets the pipeline header — comment-triggered turns are the
+// dominant CCProc invocation pattern (every ping-pong is a new comment).
+func TestBuildPromptInjectsPipelineForCommentTask(t *testing.T) {
+	task := Task{
+		IssueID:               "id-dsn",
+		TriggerCommentID:      "c1",
+		TriggerCommentContent: "please review",
+		TriggerAuthorType:     "member",
+		PipelineKind:          "ccproc-stage",
+		PipelineBase:          []byte(`{"siblings":[{"role":"designer","id":"id-dsn"},{"role":"coder","id":"id-cdr"}],"top_issue_id":"id-top","version":"v1","branch":"v1/x","bounce_cap":3}`),
+		PipelineDynamic:       []byte(`{"bounce_with_prev":0,"bounce_with_next":0,"escalated":false}`),
+		Agent:                 &AgentData{Name: "CC-designer"},
+	}
+	out := BuildPrompt(task, "claude")
+	if !strings.Contains(out, "Pipeline 状态") {
+		t.Errorf("comment-triggered prompt must inject pipeline header, got:\n%s", out)
+	}
+	if !strings.Contains(out, "next_id: id-cdr") {
+		t.Errorf("comment-triggered prompt must surface resolved neighbors, got:\n%s", out)
+	}
+}

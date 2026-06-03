@@ -136,7 +136,7 @@ INSERT INTO issue (
     parent_issue_id, position, start_date, due_date, number, project_id, runtime_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
-) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id
+) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id, pipeline_kind, pipeline_base, pipeline_dynamic
 `
 
 type CreateIssueParams struct {
@@ -203,6 +203,9 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue
 		&i.FirstExecutedAt,
 		&i.StartDate,
 		&i.RuntimeID,
+		&i.PipelineKind,
+		&i.PipelineBase,
+		&i.PipelineDynamic,
 	)
 	return i, err
 }
@@ -216,7 +219,7 @@ INSERT INTO issue (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
     $17, $18
-) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id
+) RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id, pipeline_kind, pipeline_base, pipeline_dynamic
 `
 
 type CreateIssueWithOriginParams struct {
@@ -287,6 +290,9 @@ func (q *Queries) CreateIssueWithOrigin(ctx context.Context, arg CreateIssueWith
 		&i.FirstExecutedAt,
 		&i.StartDate,
 		&i.RuntimeID,
+		&i.PipelineKind,
+		&i.PipelineBase,
+		&i.PipelineDynamic,
 	)
 	return i, err
 }
@@ -301,7 +307,7 @@ func (q *Queries) DeleteIssue(ctx context.Context, id pgtype.UUID) error {
 }
 
 const findActiveDuplicateIssue = `-- name: FindActiveDuplicateIssue :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id, pipeline_kind, pipeline_base, pipeline_dynamic FROM issue
 WHERE workspace_id = $1
   AND status NOT IN ('done', 'cancelled')
   AND project_id IS NOT DISTINCT FROM $2::uuid
@@ -351,12 +357,15 @@ func (q *Queries) FindActiveDuplicateIssue(ctx context.Context, arg FindActiveDu
 		&i.FirstExecutedAt,
 		&i.StartDate,
 		&i.RuntimeID,
+		&i.PipelineKind,
+		&i.PipelineBase,
+		&i.PipelineDynamic,
 	)
 	return i, err
 }
 
 const getIssue = `-- name: GetIssue :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id, pipeline_kind, pipeline_base, pipeline_dynamic FROM issue
 WHERE id = $1
 `
 
@@ -388,12 +397,15 @@ func (q *Queries) GetIssue(ctx context.Context, id pgtype.UUID) (Issue, error) {
 		&i.FirstExecutedAt,
 		&i.StartDate,
 		&i.RuntimeID,
+		&i.PipelineKind,
+		&i.PipelineBase,
+		&i.PipelineDynamic,
 	)
 	return i, err
 }
 
 const getIssueByNumber = `-- name: GetIssueByNumber :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id, pipeline_kind, pipeline_base, pipeline_dynamic FROM issue
 WHERE workspace_id = $1 AND number = $2
 `
 
@@ -430,12 +442,15 @@ func (q *Queries) GetIssueByNumber(ctx context.Context, arg GetIssueByNumberPara
 		&i.FirstExecutedAt,
 		&i.StartDate,
 		&i.RuntimeID,
+		&i.PipelineKind,
+		&i.PipelineBase,
+		&i.PipelineDynamic,
 	)
 	return i, err
 }
 
 const getIssueByOrigin = `-- name: GetIssueByOrigin :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id, pipeline_kind, pipeline_base, pipeline_dynamic FROM issue
 WHERE workspace_id = $1
   AND origin_type = $2
   AND origin_id = $3
@@ -481,12 +496,15 @@ func (q *Queries) GetIssueByOrigin(ctx context.Context, arg GetIssueByOriginPara
 		&i.FirstExecutedAt,
 		&i.StartDate,
 		&i.RuntimeID,
+		&i.PipelineKind,
+		&i.PipelineBase,
+		&i.PipelineDynamic,
 	)
 	return i, err
 }
 
 const getIssueInWorkspace = `-- name: GetIssueInWorkspace :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id, pipeline_kind, pipeline_base, pipeline_dynamic FROM issue
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -523,12 +541,38 @@ func (q *Queries) GetIssueInWorkspace(ctx context.Context, arg GetIssueInWorkspa
 		&i.FirstExecutedAt,
 		&i.StartDate,
 		&i.RuntimeID,
+		&i.PipelineKind,
+		&i.PipelineBase,
+		&i.PipelineDynamic,
 	)
 	return i, err
 }
 
+const getIssuePipelineState = `-- name: GetIssuePipelineState :one
+SELECT pipeline_kind, pipeline_base, pipeline_dynamic
+FROM issue
+WHERE id = $1
+`
+
+type GetIssuePipelineStateRow struct {
+	PipelineKind    pgtype.Text `json:"pipeline_kind"`
+	PipelineBase    []byte      `json:"pipeline_base"`
+	PipelineDynamic []byte      `json:"pipeline_dynamic"`
+}
+
+// Reads the structured pipeline state introduced by migration 097.
+// Legacy issues (pipeline_kind IS NULL) return zero values; callers fall
+// back to parsing the YAML block in description for those rows during the
+// dual-read compatibility window.
+func (q *Queries) GetIssuePipelineState(ctx context.Context, id pgtype.UUID) (GetIssuePipelineStateRow, error) {
+	row := q.db.QueryRow(ctx, getIssuePipelineState, id)
+	var i GetIssuePipelineStateRow
+	err := row.Scan(&i.PipelineKind, &i.PipelineBase, &i.PipelineDynamic)
+	return i, err
+}
+
 const listChildIssues = `-- name: ListChildIssues :many
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id FROM issue
+SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id, pipeline_kind, pipeline_base, pipeline_dynamic FROM issue
 WHERE parent_issue_id = $1
 ORDER BY position ASC, created_at DESC
 `
@@ -567,6 +611,9 @@ func (q *Queries) ListChildIssues(ctx context.Context, parentIssueID pgtype.UUID
 			&i.FirstExecutedAt,
 			&i.StartDate,
 			&i.RuntimeID,
+			&i.PipelineKind,
+			&i.PipelineBase,
+			&i.PipelineDynamic,
 		); err != nil {
 			return nil, err
 		}
@@ -817,6 +864,49 @@ func (q *Queries) MarkIssueFirstExecuted(ctx context.Context, id pgtype.UUID) (M
 	return i, err
 }
 
+const setIssuePipelineBase = `-- name: SetIssuePipelineBase :exec
+UPDATE issue
+SET pipeline_kind = $2,
+    pipeline_base = $3,
+    updated_at = now()
+WHERE id = $1
+`
+
+type SetIssuePipelineBaseParams struct {
+	ID           pgtype.UUID `json:"id"`
+	PipelineKind pgtype.Text `json:"pipeline_kind"`
+	PipelineBase []byte      `json:"pipeline_base"`
+}
+
+// Writes the static topology half (siblings map, top_issue_id, version,
+// branch, bounce_cap). By convention only the pipeline-initializer agent
+// calls this — stage agents go through the verdict path (planned in a
+// follow-up PR) for atomic counter updates.
+func (q *Queries) SetIssuePipelineBase(ctx context.Context, arg SetIssuePipelineBaseParams) error {
+	_, err := q.db.Exec(ctx, setIssuePipelineBase, arg.ID, arg.PipelineKind, arg.PipelineBase)
+	return err
+}
+
+const setIssuePipelineDynamic = `-- name: SetIssuePipelineDynamic :exec
+UPDATE issue
+SET pipeline_dynamic = $2,
+    updated_at = now()
+WHERE id = $1
+`
+
+type SetIssuePipelineDynamicParams struct {
+	ID              pgtype.UUID `json:"id"`
+	PipelineDynamic []byte      `json:"pipeline_dynamic"`
+}
+
+// Writes the mutable counter half (bounce_with_prev, bounce_with_next,
+// escalated). Kept separate from pipeline_base so prefix-cache-friendly
+// topology stays untouched on every ping-pong.
+func (q *Queries) SetIssuePipelineDynamic(ctx context.Context, arg SetIssuePipelineDynamicParams) error {
+	_, err := q.db.Exec(ctx, setIssuePipelineDynamic, arg.ID, arg.PipelineDynamic)
+	return err
+}
+
 const updateIssue = `-- name: UpdateIssue :one
 UPDATE issue SET
     title = COALESCE($2, title),
@@ -833,7 +923,7 @@ UPDATE issue SET
     runtime_id = $13,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id, pipeline_kind, pipeline_base, pipeline_dynamic
 `
 
 type UpdateIssueParams struct {
@@ -894,6 +984,9 @@ func (q *Queries) UpdateIssue(ctx context.Context, arg UpdateIssueParams) (Issue
 		&i.FirstExecutedAt,
 		&i.StartDate,
 		&i.RuntimeID,
+		&i.PipelineKind,
+		&i.PipelineBase,
+		&i.PipelineDynamic,
 	)
 	return i, err
 }
@@ -903,7 +996,7 @@ UPDATE issue SET
     status = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id, pipeline_kind, pipeline_base, pipeline_dynamic
 `
 
 type UpdateIssueStatusParams struct {
@@ -939,6 +1032,9 @@ func (q *Queries) UpdateIssueStatus(ctx context.Context, arg UpdateIssueStatusPa
 		&i.FirstExecutedAt,
 		&i.StartDate,
 		&i.RuntimeID,
+		&i.PipelineKind,
+		&i.PipelineBase,
+		&i.PipelineDynamic,
 	)
 	return i, err
 }

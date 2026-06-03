@@ -162,3 +162,32 @@ UPDATE issue
 SET first_executed_at = now()
 WHERE id = $1 AND first_executed_at IS NULL
 RETURNING id, workspace_id, creator_type, creator_id, first_executed_at;
+
+-- name: GetIssuePipelineState :one
+-- Reads the structured pipeline state introduced by migration 097.
+-- Legacy issues (pipeline_kind IS NULL) return zero values; callers fall
+-- back to parsing the YAML block in description for those rows during the
+-- dual-read compatibility window.
+SELECT pipeline_kind, pipeline_base, pipeline_dynamic
+FROM issue
+WHERE id = $1;
+
+-- name: SetIssuePipelineBase :exec
+-- Writes the static topology half (siblings map, top_issue_id, version,
+-- branch, bounce_cap). By convention only the pipeline-initializer agent
+-- calls this — stage agents go through the verdict path (planned in a
+-- follow-up PR) for atomic counter updates.
+UPDATE issue
+SET pipeline_kind = $2,
+    pipeline_base = $3,
+    updated_at = now()
+WHERE id = $1;
+
+-- name: SetIssuePipelineDynamic :exec
+-- Writes the mutable counter half (bounce_with_prev, bounce_with_next,
+-- escalated). Kept separate from pipeline_base so prefix-cache-friendly
+-- topology stays untouched on every ping-pong.
+UPDATE issue
+SET pipeline_dynamic = $2,
+    updated_at = now()
+WHERE id = $1;

@@ -347,6 +347,9 @@ type Issue struct {
 	FirstExecutedAt    pgtype.Timestamptz `json:"first_executed_at"`
 	StartDate          pgtype.Timestamptz `json:"start_date"`
 	RuntimeID          pgtype.UUID        `json:"runtime_id"`
+	PipelineKind       pgtype.Text        `json:"pipeline_kind"`
+	PipelineBase       []byte             `json:"pipeline_base"`
+	PipelineDynamic    []byte             `json:"pipeline_dynamic"`
 }
 
 type IssueDependency struct {

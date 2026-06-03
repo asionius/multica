@@ -1298,23 +1298,49 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		// Skip all prior state when the task was flagged as a manual rerun:
 		// the user just judged the prior output bad, so the daemon must start a
 		// fresh agent session in a fresh workdir instead of resuming anything
-		// from the same conversation that produced that output. For
-		// comment-triggered follow-ups, skip only the session resume: resumed
-		// issue conversations often inherit the prior final assistant message
-		// (for example "Done.") and answer a new human comment with that stale
-		// completion marker instead of the comment itself. Keep reusing the
-		// workdir for comment follow-ups so the agent still sees the same checkout.
+		// from the same conversation that produced that output.
+		//
+		// Comment-triggered tasks now also reuse the session: empirically
+		// session reuse handles new human comments cleanly (the CLI appends
+		// the new user turn rather than replaying the prior final assistant
+		// message), and reusing the session is the only way to keep the
+		// prefix prompt cache warm across pipeline ping-pongs. The risk of
+		// stale completion markers will be revisited if it actually surfaces
+		// — at that point a typed wakeup payload (planned in a follow-up PR)
+		// can disambiguate.
 		if !task.ForceFreshSession {
 			if prior, err := h.Queries.GetLastTaskSession(r.Context(), db.GetLastTaskSessionParams{
 				AgentID: task.AgentID,
 				IssueID: task.IssueID,
 			}); err == nil && prior.SessionID.Valid {
-				if !task.TriggerCommentID.Valid && prior.RuntimeID == task.RuntimeID {
+				if prior.RuntimeID == task.RuntimeID {
 					resp.PriorSessionID = prior.SessionID.String
 				}
 				if prior.WorkDir.Valid {
 					resp.PriorWorkDir = prior.WorkDir.String
 				}
+			}
+		}
+
+		// Pipeline state injection: read the structured pipeline columns
+		// (added by migration 097) and pass them to the daemon so the
+		// agent prompt can render PREV_ID/NEXT_ID/BOUNCE counters etc.
+		// directly. Without this every CCProc agent had to shell out to
+		// `multica issue pipeline get` + jq on every turn just to learn
+		// its own role/siblings — wasted tokens and round-trips.
+		//
+		// Legacy issues (pipeline_kind IS NULL) leave the response
+		// fields empty; the agent's dual-read fallback (parse the YAML
+		// block in description) takes over.
+		if ps, err := h.Queries.GetIssuePipelineState(r.Context(), task.IssueID); err == nil {
+			if ps.PipelineKind.Valid {
+				resp.PipelineKind = ps.PipelineKind.String
+			}
+			if len(ps.PipelineBase) > 0 {
+				resp.PipelineBase = json.RawMessage(ps.PipelineBase)
+			}
+			if len(ps.PipelineDynamic) > 0 {
+				resp.PipelineDynamic = json.RawMessage(ps.PipelineDynamic)
 			}
 		}
 	}

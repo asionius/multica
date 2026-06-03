@@ -176,6 +176,9 @@ type AgentTaskResponse struct {
 	QuickCreatePrompt       string                `json:"quick_create_prompt,omitempty"`       // user's natural-language input for quick-create tasks
 	SquadID                 string                `json:"squad_id,omitempty"`                  // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
 	SquadName               string                `json:"squad_name,omitempty"`                // display name for the picker squad
+	PipelineKind            string                `json:"pipeline_kind,omitempty"`             // structured pipeline state introduced by migration 097 — "ccproc-stage" | "ccproc-top" | "ccproc-packager" | "" (legacy/unstructured)
+	PipelineBase            json.RawMessage       `json:"pipeline_base,omitempty"`             // static topology half (siblings ordered array, top_issue_id, version, branch, bounce_cap)
+	PipelineDynamic         json.RawMessage       `json:"pipeline_dynamic,omitempty"`          // mutable counters (bounce_with_prev, bounce_with_next, escalated)
 	Kind                    string                `json:"kind"`                                // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
 }
 
