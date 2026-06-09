@@ -359,6 +359,19 @@ type IssueDependency struct {
 	Type             string      `json:"type"`
 }
 
+type IssueEvent struct {
+	ID               pgtype.UUID        `json:"id"`
+	IssueID          pgtype.UUID        `json:"issue_id"`
+	Kind             string             `json:"kind"`
+	Payload          []byte             `json:"payload"`
+	SourceCommentID  pgtype.UUID        `json:"source_comment_id"`
+	SourceActorType  string             `json:"source_actor_type"`
+	SourceActorID    pgtype.UUID        `json:"source_actor_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
+	ConsumedByTaskID pgtype.UUID        `json:"consumed_by_task_id"`
+}
+
 type IssueLabel struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`

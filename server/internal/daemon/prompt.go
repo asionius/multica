@@ -31,48 +31,30 @@ func BuildPrompt(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
-	if pipeline := renderPipelineState(task); pipeline != "" {
-		b.WriteString(pipeline)
+	if prefix := renderPipelinePrefix(task); prefix != "" {
+		b.WriteString(prefix)
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "If you need comment history, `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). Pass `--since <RFC3339>` to fetch only comments newer than a known cursor.\n", task.IssueID)
+	// Dynamic counters go last so they don't shift the cache boundary.
+	if dyn := renderPipelineDynamic(task); dyn != "" {
+		b.WriteString(dyn)
+	}
 	return b.String()
 }
 
-// renderPipelineState materializes the structured pipeline_kind /
-// pipeline_base / pipeline_dynamic columns (migration 097) into a
-// prompt block so CCProc agents don't have to shell out to
-// `multica issue pipeline get` + jq just to learn their own role,
-// neighbors, or counters. Returns the empty string for legacy issues
-// (kind = "") — the agent's description-parse fallback handles those.
+// renderPipelinePrefix materializes the STATIC half of the pipeline
+// state (migration 097) into a prompt block — topology, role assignment,
+// and governance parameters that never change once the pipeline is
+// created. Keeping this stable is critical for prompt prefix cache
+// hits across --resume turns.
 //
-// Output shape (example for a middle ccproc-stage):
+// Dynamic counters (bounce_with_prev / bounce_with_next / escalated)
+// are handled separately by renderPipelineDynamic and must appear at
+// the END of the prompt so they don't shift the cache boundary.
 //
-//	## Pipeline 状态(daemon 已为你解析,直接使用以下变量)
-//
-//	- pipeline_kind: ccproc-stage
-//	- role: designer
-//	- prev_id: <uuid>
-//	- next_id: <uuid>
-//	- parent_id: <uuid>
-//	- version: v1.2.3
-//	- branch: v1.2.3/abc123
-//	- bounce_cap: 5
-//	- dynamic.bounce_with_prev: 0
-//	- dynamic.bounce_with_next: 1
-//	- dynamic.escalated: false
-//
-//	需要写回时使用:
-//	  multica issue pipeline set <issue-id> --dynamic '<json>'
-//
-//	完整 base / dynamic JSON:
-//	  base: { ... }
-//	  dynamic: { ... }
-//
-// For ccproc-top / ccproc-packager the role/prev/next lines are
-// omitted (no siblings array). The agent name is mapped to a stage
-// role by stripping the leading "CC-" prefix.
-func renderPipelineState(task Task) string {
+// Returns empty string for legacy issues (kind = "").
+func renderPipelinePrefix(task Task) string {
 	if task.PipelineKind == "" {
 		return ""
 	}
@@ -81,9 +63,6 @@ func renderPipelineState(task Task) string {
 	b.WriteString("## Pipeline 状态(daemon 已为你解析,直接使用以下变量)\n\n")
 	fmt.Fprintf(&b, "- pipeline_kind: %s\n", task.PipelineKind)
 
-	// Parse base into a generic map so we can pull out the well-known
-	// fields without committing to a typed struct that would need to
-	// move in lockstep with the schema.
 	var base map[string]any
 	if len(task.PipelineBase) > 0 {
 		if err := json.Unmarshal(task.PipelineBase, &base); err != nil {
@@ -103,17 +82,11 @@ func renderPipelineState(task Task) string {
 		if v, ok := base["top_issue_id"].(string); ok {
 			fmt.Fprintf(&b, "- parent_id: %s\n", v)
 		}
-		// Expose every sibling by role so multi-upstream consumers
-		// (tester reads req+designer+coder, integrator peeks at coder
-		// for cross-stage bounce) don't have to fall back to a CLI
-		// round-trip just to learn other stages' IDs.
 		for _, kv := range siblingPairs(base) {
 			fmt.Fprintf(&b, "- siblings.%s: %s\n", kv.role, kv.id)
 		}
 	}
 
-	// Common base fields (version / branch / bounce_cap) — present on
-	// all three ccproc-* kinds.
 	if base != nil {
 		if v, ok := base["version"].(string); ok {
 			fmt.Fprintf(&b, "- version: %s\n", v)
@@ -121,42 +94,57 @@ func renderPipelineState(task Task) string {
 		if v, ok := base["branch"].(string); ok {
 			fmt.Fprintf(&b, "- branch: %s\n", v)
 		}
-		// bounce_cap may decode as float64 (JSON number).
 		if v, ok := base["bounce_cap"]; ok {
 			fmt.Fprintf(&b, "- bounce_cap: %v\n", numericOrAny(v))
 		}
 	}
 
-	// Dynamic counters (only ccproc-stage writes these in practice;
-	// top/packager keep dynamic = {} but emit it anyway for symmetry).
-	var dyn map[string]any
-	if len(task.PipelineDynamic) > 0 {
-		_ = json.Unmarshal(task.PipelineDynamic, &dyn)
-	}
-	if dyn != nil {
-		if v, ok := dyn["bounce_with_prev"]; ok {
-			fmt.Fprintf(&b, "- dynamic.bounce_with_prev: %v\n", numericOrAny(v))
-		}
-		if v, ok := dyn["bounce_with_next"]; ok {
-			fmt.Fprintf(&b, "- dynamic.bounce_with_next: %v\n", numericOrAny(v))
-		}
-		if v, ok := dyn["escalated"]; ok {
-			fmt.Fprintf(&b, "- dynamic.escalated: %v\n", v)
-		}
-	}
-
-	b.WriteString("\n需要写回 dynamic 计数器时:\n")
-	fmt.Fprintf(&b, "  multica issue pipeline set %s --dynamic '<json>'\n", task.IssueID)
+	b.WriteString("\n需要写回动态计数器时调用 verdict API:\n")
+	fmt.Fprintf(&b, "  multica issue verdict %s --action <approve|deny|escalate> [--feedback \"...\"]\n", task.IssueID)
 	b.WriteString("(读侧 NEVER 调用 `multica issue pipeline get` — 上面的字段就是权威源。)\n\n")
 
-	if len(task.PipelineBase) > 0 {
-		fmt.Fprintf(&b, "完整 base JSON:\n  %s\n", string(task.PipelineBase))
-	}
-	if len(task.PipelineDynamic) > 0 {
-		fmt.Fprintf(&b, "完整 dynamic JSON:\n  %s\n", string(task.PipelineDynamic))
-	}
-	b.WriteString("\n")
+	b.WriteString("需要完整 base JSON 时可读(通常不需要):\n")
+	b.WriteString("  multica issue pipeline get <issue-id> --field base\n\n")
 	return b.String()
+}
+
+// renderPipelineDynamic materializes the VARIABLE half of the pipeline
+// state — counters that change on every approval/denial cycle. This
+// block MUST appear at the END of the daemon prompt so that the static
+// prefix (renderPipelinePrefix + instructions) stays identical across
+// --resume turns and keeps the prompt cache warm.
+//
+// Returns empty string when there is no pipeline or no dynamic data
+// (optional counters like bounce_with_prev may be absent).
+func renderPipelineDynamic(task Task) string {
+	if task.PipelineKind == "" {
+		return ""
+	}
+	if len(task.PipelineDynamic) == 0 {
+		return ""
+	}
+	var dyn map[string]any
+	if err := json.Unmarshal(task.PipelineDynamic, &dyn); err != nil {
+		return ""
+	}
+	var b strings.Builder
+	hasAny := false
+	if v, ok := dyn["bounce_with_prev"]; ok {
+		fmt.Fprintf(&b, "- counter.bounce_with_prev: %v\n", numericOrAny(v))
+		hasAny = true
+	}
+	if v, ok := dyn["bounce_with_next"]; ok {
+		fmt.Fprintf(&b, "- counter.bounce_with_next: %v\n", numericOrAny(v))
+		hasAny = true
+	}
+	if v, ok := dyn["escalated"]; ok {
+		fmt.Fprintf(&b, "- counter.escalated: %v\n", v)
+		hasAny = true
+	}
+	if !hasAny {
+		return ""
+	}
+	return "## Pipeline 计数器(当前值)\n" + b.String() + "\n"
 }
 
 // agentRole strips the leading "CC-" prefix from the assigned agent's
@@ -361,6 +349,29 @@ func buildCommentPrompt(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
+
+	// Prefer the typed IssueEvent payload (migration 098) over raw comment
+	// text. When both are present, the structured event wins: it is the
+	// canonical, deduplicated representation of the reviewer's intent.
+	if task.WakeupEventKind != "" {
+		b.WriteString("[WAKEUP EVENT] A structured pipeline event has been recorded for this issue:\n\n")
+		fmt.Fprintf(&b, "- event_kind: %s\n", task.WakeupEventKind)
+		if task.WakeupEventFeedback != "" {
+			fmt.Fprintf(&b, "- feedback: %s\n", task.WakeupEventFeedback)
+		}
+		// Kind-specific brief so agent knows exactly what to do without
+		// having to re-parse the raw comment body.
+		switch task.WakeupEventKind {
+		case "review_approved":
+			b.WriteString("\nA human reviewer approved your output. Proceed with the approve verdict flow.\n")
+		case "review_denied":
+			b.WriteString("\nA human reviewer denied your output. Review the feedback above and rework accordingly.\n")
+		case "escalation_requested":
+			b.WriteString("\nA human escalation has been requested. Review the feedback and decide how to proceed or wait for PM input.\n")
+		}
+		b.WriteString("\n")
+	}
+
 	if task.TriggerCommentContent != "" {
 		authorLabel := "A user"
 		if task.TriggerAuthorType == "agent" {
@@ -370,7 +381,15 @@ func buildCommentPrompt(task Task, provider string) string {
 			}
 			authorLabel = fmt.Sprintf("Another agent (%s)", name)
 		}
-		fmt.Fprintf(&b, "[NEW COMMENT] %s just left a new comment. Focus on THIS comment — do not confuse it with previous ones:\n\n", authorLabel)
+		// Only show the raw comment if there's no structured event; when
+		// there IS a structured event the raw comment is still shown as
+		// supporting context — it's the human-authored body and reviewers
+		// often add detail beyond the approve/deny header.
+		if task.WakeupEventKind != "" {
+			fmt.Fprintf(&b, "[COMMENT CONTEXT] Raw comment from %s:\n\n", strings.ToLower(authorLabel))
+		} else {
+			fmt.Fprintf(&b, "[NEW COMMENT] %s just left a new comment. Focus on THIS comment — do not confuse it with previous ones:\n\n", authorLabel)
+		}
 		fmt.Fprintf(&b, "> %s\n\n", task.TriggerCommentContent)
 		if task.TriggerAuthorType == "agent" {
 			b.WriteString("⚠️ The triggering comment was posted by another agent. Decide whether a reply is warranted. If you produced actual work this turn (investigated, fixed something, answered a real question), post the result as a normal reply — that is NOT a noise comment, and the standard rule that final results must be delivered via comment still applies. If the triggering comment was a pure acknowledgment, thanks, or sign-off AND you produced no work this turn, do NOT reply — and do NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is the preferred way to end agent-to-agent threads. If you do reply, do not @mention the other agent as a sign-off (that re-triggers them and starts a loop).\n\n")
@@ -379,12 +398,16 @@ func buildCommentPrompt(task Task, provider string) string {
 			fmt.Fprintf(&b, "⚠️ **Squad leader no_action rule:** If you decide no action is needed, call `multica squad activity %s no_action --reason \"...\"` and EXIT. DO NOT post any comment — not even one that says \"no action needed\" or \"exiting silently\". The squad activity call records your decision; a comment is redundant noise.\n\n", task.IssueID)
 		}
 	}
-	if pipeline := renderPipelineState(task); pipeline != "" {
+	if pipeline := renderPipelinePrefix(task); pipeline != "" {
 		b.WriteString(pipeline)
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then decide how to proceed.\n\n", task.IssueID)
 	fmt.Fprintf(&b, "If you need comment history, `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). Pass `--since <RFC3339>` to fetch only comments newer than a known cursor.\n\n", task.IssueID)
 	b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID))
+	// Dynamic counters go last so they don't shift the cache boundary.
+	if dyn := renderPipelineDynamic(task); dyn != "" {
+		b.WriteString(dyn)
+	}
 	return b.String()
 }
 

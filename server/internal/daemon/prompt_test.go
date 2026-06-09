@@ -223,17 +223,16 @@ func TestBuildPromptNonSquadLeaderNoRule(t *testing.T) {
 // get an empty render. The agent's description-parse fallback handles
 // those — injecting an empty header would just confuse the prompt.
 func TestRenderPipelineStateLegacy(t *testing.T) {
-	out := renderPipelineState(Task{IssueID: "issue-123"})
+	out := renderPipelinePrefix(Task{IssueID: "issue-123"})
 	if out != "" {
 		t.Errorf("legacy issues (no pipeline_kind) must render empty, got:\n%s", out)
 	}
 }
 
 // TestRenderPipelineStateMiddleStage exercises the most common path:
-// a designer (middle of the 5-stage pipeline) ping-ponging with a
-// non-zero counter. The output must surface role/prev/next/parent and
-// the dynamic counters so the agent can read them off the header
-// instead of shelling out to `multica issue pipeline get`.
+// a designer (middle of the 5-stage pipeline) with active counters.
+// The prefix must surface role/prev/next/parent/version/branch/cap,
+// and the dynamic suffix must carry the counter values.
 func TestRenderPipelineStateMiddleStage(t *testing.T) {
 	base := `{
         "siblings": [
@@ -256,8 +255,9 @@ func TestRenderPipelineStateMiddleStage(t *testing.T) {
 		PipelineDynamic: []byte(dyn),
 		Agent:           &AgentData{Name: "CC-designer"},
 	}
-	out := renderPipelineState(task)
 
+	// Static prefix checks: topology + governance, never changes.
+	prefix := renderPipelinePrefix(task)
 	mustContain := []string{
 		"pipeline_kind: ccproc-stage",
 		"role: designer",
@@ -267,15 +267,25 @@ func TestRenderPipelineStateMiddleStage(t *testing.T) {
 		"version: v1.2.3",
 		"branch: v1.2.3/abc",
 		"bounce_cap: 5",
-		"dynamic.bounce_with_prev: 1",
-		"dynamic.bounce_with_next: 0",
-		"dynamic.escalated: false",
-		"multica issue pipeline set id-dsn --dynamic",
+		"multica issue verdict",
 		"NEVER 调用 `multica issue pipeline get`",
 	}
 	for _, want := range mustContain {
-		if !strings.Contains(out, want) {
-			t.Errorf("middle-stage render missing %q, got:\n%s", want, out)
+		if !strings.Contains(prefix, want) {
+			t.Errorf("prefix render missing %q, got:\n%s", want, prefix)
+		}
+	}
+
+	// Dynamic suffix checks: counters must appear (and appear at the end).
+	dynOut := renderPipelineDynamic(task)
+	dynMust := []string{
+		"counter.bounce_with_prev: 1",
+		"counter.bounce_with_next: 0",
+		"counter.escalated: false",
+	}
+	for _, want := range dynMust {
+		if !strings.Contains(dynOut, want) {
+			t.Errorf("dynamic render missing %q, got:\n%s", want, dynOut)
 		}
 	}
 }
@@ -296,7 +306,7 @@ func TestRenderPipelineStateBoundaries(t *testing.T) {
         "bounce_cap": 3
     }`
 	// First stage: prev should be empty.
-	first := renderPipelineState(Task{
+	first := renderPipelinePrefix(Task{
 		IssueID:      "id-req",
 		PipelineKind: "ccproc-stage",
 		PipelineBase: []byte(base),
@@ -309,7 +319,7 @@ func TestRenderPipelineStateBoundaries(t *testing.T) {
 		t.Errorf("first stage next_id wrong, got:\n%s", first)
 	}
 	// Last stage: next should be empty.
-	last := renderPipelineState(Task{
+	last := renderPipelinePrefix(Task{
 		IssueID:      "id-int",
 		PipelineKind: "ccproc-stage",
 		PipelineBase: []byte(base),
@@ -331,7 +341,7 @@ func TestRenderPipelineStateBoundaries(t *testing.T) {
 func TestRenderPipelineStateTopAndPackager(t *testing.T) {
 	for _, kind := range []string{"ccproc-top", "ccproc-packager"} {
 		base := `{"version":"v9.9.9","branch":"v9.9.9/zzz","bounce_cap":7}`
-		out := renderPipelineState(Task{
+		out := renderPipelinePrefix(Task{
 			IssueID:      "id-anything",
 			PipelineKind: kind,
 			PipelineBase: []byte(base),
@@ -369,7 +379,7 @@ func TestRenderPipelineStateExposesAllSiblings(t *testing.T) {
         "branch": "v1.0.0/x",
         "bounce_cap": 3
     }`
-	out := renderPipelineState(Task{
+	out := renderPipelinePrefix(Task{
 		IssueID:      "id-tst",
 		PipelineKind: "ccproc-stage",
 		PipelineBase: []byte(base),

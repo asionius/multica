@@ -315,6 +315,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		r.Post("/runtimes/{runtimeId}/recover-orphans", h.RecoverOrphanedTasks)
 		r.Post("/tasks/{taskId}/session", h.PinTaskSession)
+
+		r.Post("/issue-events/{eventId}/consume", h.ConsumeIssueEvent)
 	})
 
 	// Protected API routes
@@ -430,9 +432,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/labels", h.AttachLabel)
 					r.Delete("/labels/{labelId}", h.DetachLabel)
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
-					r.Get("/pipeline", h.GetIssuePipeline)
-					r.Patch("/pipeline/base", h.PatchIssuePipelineBase)
-					r.Patch("/pipeline/dynamic", h.PatchIssuePipelineDynamic)
+				r.Get("/pipeline", h.GetIssuePipeline)
+				r.Patch("/pipeline/base", h.PatchIssuePipelineBase)
+				r.Patch("/pipeline/dynamic", h.PatchIssuePipelineDynamic)
+				r.Post("/verdict", h.PostIssueVerdict)
 				})
 			})
 

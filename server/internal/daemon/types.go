@@ -64,6 +64,15 @@ type Task struct {
 	PipelineKind            string          `json:"pipeline_kind,omitempty"`             // structured pipeline state introduced by migration 097 — "ccproc-stage" | "ccproc-top" | "ccproc-packager" | "" (legacy/unstructured)
 	PipelineBase            json.RawMessage `json:"pipeline_base,omitempty"`             // static topology half (siblings ordered array, top_issue_id, version, branch, bounce_cap)
 	PipelineDynamic         json.RawMessage `json:"pipeline_dynamic,omitempty"`          // mutable counters (bounce_with_prev, bounce_with_next, escalated)
+	// WakeupEventID / WakeupEventKind / WakeupEventFeedback are set for
+	// comment-triggered tasks when an unconsumed IssueEvent (migration 098)
+	// was found for this issue. The daemon injects a structured wakeup
+	// payload into the prompt instead of relying on raw comment text
+	// parsing. Empty WakeupEventID means no typed event was found; the
+	// agent falls back to parsing TriggerCommentContent itself.
+	WakeupEventID       string `json:"wakeup_event_id,omitempty"`       // issue_events.id — daemon marks consumed after session established
+	WakeupEventKind     string `json:"wakeup_event_kind,omitempty"`     // e.g. review_approved, review_denied, escalation_requested
+	WakeupEventFeedback string `json:"wakeup_event_feedback,omitempty"` // reviewer free-text note (may be empty)
 }
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon

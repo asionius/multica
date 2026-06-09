@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -539,6 +540,12 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	groupedAtt := h.groupAttachments(r, []pgtype.UUID{comment.ID})
 	resp := commentToResponse(comment, nil, groupedAtt[uuidToString(comment.ID)])
 	slog.Info("comment created", append(logger.RequestAttrs(r), "comment_id", uuidToString(comment.ID), "issue_id", issueID)...)
+
+	// If the comment contains a ### [REVIEW] magic header, create a typed
+	// IssueEvent so the daemon can inject a structured wakeup payload instead
+	// of raw comment text that the agent has to parse.
+	h.maybeCreateIssueEventFromMagicHeader(r.Context(), issue.ID, comment, authorType, authorID)
+
 	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), authorType, authorID, map[string]any{
 		"comment":             resp,
 		"issue_title":         issue.Title,
@@ -1065,4 +1072,56 @@ func (h *Handler) UnresolveComment(w http.ResponseWriter, r *http.Request) {
 		h.publish(protocol.EventCommentUnresolved, workspaceID, actorType, actorID, map[string]any{"comment": resp})
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// maybeCreateIssueEventFromMagicHeader checks if a comment contains a
+// ### [REVIEW] approve / deny / escalate magic header. If found, it
+// creates a typed IssueEvent so the daemon can inject a structured
+// wakeup payload instead of raw comment text that the agent has to
+// parse line-by-line.
+func (h *Handler) maybeCreateIssueEventFromMagicHeader(ctx context.Context, issueID pgtype.UUID, comment db.Comment, authorType, authorID string) {
+	if authorType != "member" {
+		return // only human reviewers produce structured verdict events
+	}
+
+	content := strings.TrimSpace(comment.Content)
+	var kind string
+	var feedback string
+
+	switch {
+	case strings.HasPrefix(content, "### [REVIEW] approve"):
+		kind = "review_approved"
+	case strings.HasPrefix(content, "### [REVIEW] deny"):
+		kind = "review_denied"
+		if idx := strings.Index(content, "\n"); idx > 0 {
+			feedback = strings.TrimSpace(content[idx+1:])
+		}
+	case strings.HasPrefix(content, "### [REVIEW] escalate"):
+		kind = "escalation_requested"
+	default:
+		return
+	}
+
+	payload := map[string]any{"feedback": feedback}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	sourceActorUUID, err := util.ParseUUID(authorID)
+	if err != nil {
+		slog.Warn("issue event: invalid author_id", "author_id", authorID, "error", err)
+		return
+	}
+
+	if err := h.Queries.CreateIssueEvent(ctx, db.CreateIssueEventParams{
+		IssueID:          issueID,
+		Kind:             kind,
+		Payload:          payloadJSON,
+		SourceCommentID:  comment.ID,
+		SourceActorType:  authorType,
+		SourceActorID:    sourceActorUUID,
+	}); err != nil {
+		slog.Error("create issue event failed", "error", err, "issue_id", uuidToString(issueID))
+	}
 }

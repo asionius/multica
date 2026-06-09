@@ -156,6 +156,15 @@ func (c *Client) StartTask(ctx context.Context, taskID string) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/start", taskID), map[string]any{}, nil)
 }
 
+// MarkIssueEventConsumed marks the given IssueEvent as consumed by the
+// specified task. Called right before executing the agent so the event
+// is never delivered twice even if the daemon crashes mid-task.
+func (c *Client) MarkIssueEventConsumed(ctx context.Context, eventID, taskID string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/issue-events/%s/consume", eventID), map[string]any{
+		"task_id": taskID,
+	}, nil)
+}
+
 func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, step, total int) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/progress", taskID), map[string]any{
 		"summary": summary,

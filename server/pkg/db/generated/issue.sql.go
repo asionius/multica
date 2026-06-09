@@ -571,6 +571,64 @@ func (q *Queries) GetIssuePipelineState(ctx context.Context, id pgtype.UUID) (Ge
 	return i, err
 }
 
+const incrementBounceWithNext = `-- name: IncrementBounceWithNext :one
+UPDATE issue
+SET pipeline_dynamic = jsonb_set(
+    COALESCE(pipeline_dynamic, '{}'::jsonb),
+    '{bounce_with_next}',
+    to_jsonb(COALESCE((pipeline_dynamic->>'bounce_with_next')::int, 0) + 1)
+),
+    updated_at = now()
+WHERE id = $1 AND pipeline_kind IS NOT NULL
+RETURNING
+    (pipeline_dynamic->>'bounce_with_next')::int AS new_bounce_with_next,
+    (pipeline_dynamic->>'bounce_with_prev')::int AS bounce_with_prev,
+    (pipeline_dynamic->>'escalated')::boolean AS escalated,
+    (pipeline_base->>'bounce_cap')::int AS bounce_cap
+`
+
+type IncrementBounceWithNextRow struct {
+	NewBounceWithNext int32 `json:"new_bounce_with_next"`
+	BounceWithPrev    int32 `json:"bounce_with_prev"`
+	Escalated         bool  `json:"escalated"`
+	BounceCap         int32 `json:"bounce_cap"`
+}
+
+// Atomic increment of bounce_with_next returning the new value. Called
+// during the verdict deny path: the upstream agent gets ++ on its
+// outgoing bounce counter. The caller compares the returned value with
+// pipeline_base.bounce_cap to decide whether to set escalated.
+func (q *Queries) IncrementBounceWithNext(ctx context.Context, id pgtype.UUID) (IncrementBounceWithNextRow, error) {
+	row := q.db.QueryRow(ctx, incrementBounceWithNext, id)
+	var i IncrementBounceWithNextRow
+	err := row.Scan(
+		&i.NewBounceWithNext,
+		&i.BounceWithPrev,
+		&i.Escalated,
+		&i.BounceCap,
+	)
+	return i, err
+}
+
+const incrementBounceWithPrev = `-- name: IncrementBounceWithPrev :exec
+UPDATE issue
+SET pipeline_dynamic = jsonb_set(
+    COALESCE(pipeline_dynamic, '{}'::jsonb),
+    '{bounce_with_prev}',
+    to_jsonb(COALESCE((pipeline_dynamic->>'bounce_with_prev')::int, 0) + 1)
+),
+    updated_at = now()
+WHERE id = $1 AND pipeline_kind IS NOT NULL
+`
+
+// Atomic increment of bounce_with_prev on the target issue. Called during
+// the verdict approve path: the downstream agent gets ++ on its incoming
+// bounce counter so it can see how many times its predecessor was denied.
+func (q *Queries) IncrementBounceWithPrev(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, incrementBounceWithPrev, id)
+	return err
+}
+
 const listChildIssues = `-- name: ListChildIssues :many
 SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, runtime_id, pipeline_kind, pipeline_base, pipeline_dynamic FROM issue
 WHERE parent_issue_id = $1
@@ -864,6 +922,23 @@ func (q *Queries) MarkIssueFirstExecuted(ctx context.Context, id pgtype.UUID) (M
 	return i, err
 }
 
+const resetIssuePipelineEscalated = `-- name: ResetIssuePipelineEscalated :exec
+UPDATE issue
+SET pipeline_dynamic = jsonb_set(
+    COALESCE(pipeline_dynamic, '{}'::jsonb),
+    '{escalated}',
+    'false'::jsonb
+),
+    updated_at = now()
+WHERE id = $1 AND pipeline_kind IS NOT NULL
+`
+
+// Clears the escalated flag when an escalation is resolved by the PM.
+func (q *Queries) ResetIssuePipelineEscalated(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, resetIssuePipelineEscalated, id)
+	return err
+}
+
 const setIssuePipelineBase = `-- name: SetIssuePipelineBase :exec
 UPDATE issue
 SET pipeline_kind = $2,
@@ -904,6 +979,24 @@ type SetIssuePipelineDynamicParams struct {
 // topology stays untouched on every ping-pong.
 func (q *Queries) SetIssuePipelineDynamic(ctx context.Context, arg SetIssuePipelineDynamicParams) error {
 	_, err := q.db.Exec(ctx, setIssuePipelineDynamic, arg.ID, arg.PipelineDynamic)
+	return err
+}
+
+const setIssuePipelineEscalated = `-- name: SetIssuePipelineEscalated :exec
+UPDATE issue
+SET pipeline_dynamic = jsonb_set(
+    COALESCE(pipeline_dynamic, '{}'::jsonb),
+    '{escalated}',
+    'true'::jsonb
+),
+    updated_at = now()
+WHERE id = $1 AND pipeline_kind IS NOT NULL
+`
+
+// Atomically sets escalated=true on pipeline_dynamic. Called when
+// bounce_with_next exceeds bounce_cap in the deny path.
+func (q *Queries) SetIssuePipelineEscalated(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, setIssuePipelineEscalated, id)
 	return err
 }
 

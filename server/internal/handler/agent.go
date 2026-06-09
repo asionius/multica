@@ -179,6 +179,9 @@ type AgentTaskResponse struct {
 	PipelineKind            string                `json:"pipeline_kind,omitempty"`             // structured pipeline state introduced by migration 097 — "ccproc-stage" | "ccproc-top" | "ccproc-packager" | "" (legacy/unstructured)
 	PipelineBase            json.RawMessage       `json:"pipeline_base,omitempty"`             // static topology half (siblings ordered array, top_issue_id, version, branch, bounce_cap)
 	PipelineDynamic         json.RawMessage       `json:"pipeline_dynamic,omitempty"`          // mutable counters (bounce_with_prev, bounce_with_next, escalated)
+	WakeupEventID           string                `json:"wakeup_event_id,omitempty"`           // issue_events.id of the oldest unconsumed IssueEvent (migration 098); empty = no typed event
+	WakeupEventKind         string                `json:"wakeup_event_kind,omitempty"`         // IssueEvent.kind: review_approved | review_denied | escalation_requested | …
+	WakeupEventFeedback     string                `json:"wakeup_event_feedback,omitempty"`     // reviewer free-text note extracted from event payload
 	Kind                    string                `json:"kind"`                                // discriminator: "comment" | "autopilot" | "chat" | "quick_create" | "direct" — used by the activity row to label tasks that have no linked issue
 }
 

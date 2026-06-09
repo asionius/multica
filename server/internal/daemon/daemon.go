@@ -2383,6 +2383,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		taskLog.Info("resuming session", "session_id", task.PriorSessionID)
 	}
 
+	// Mark the IssueEvent consumed now that we are about to run the agent.
+	// Doing it before execution (not after) prevents a retry of the same
+	// claim from delivering the same event twice in the edge case where the
+	// daemon crashes mid-task. Exactly-once delivery: the event is consumed
+	// at most once, even if the task itself fails.
+	if task.WakeupEventID != "" {
+		if err := d.client.MarkIssueEventConsumed(ctx, task.WakeupEventID, task.ID); err != nil {
+			taskLog.Warn("failed to mark issue event consumed", "event_id", task.WakeupEventID, "error", err)
+		}
+	}
+
 	taskStart := time.Now()
 
 	var customArgs []string

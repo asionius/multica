@@ -191,3 +191,58 @@ UPDATE issue
 SET pipeline_dynamic = $2,
     updated_at = now()
 WHERE id = $1;
+
+-- name: IncrementBounceWithPrev :exec
+-- Atomic increment of bounce_with_prev on the target issue. Called during
+-- the verdict approve path: the downstream agent gets ++ on its incoming
+-- bounce counter so it can see how many times its predecessor was denied.
+UPDATE issue
+SET pipeline_dynamic = jsonb_set(
+    COALESCE(pipeline_dynamic, '{}'::jsonb),
+    '{bounce_with_prev}',
+    to_jsonb(COALESCE((pipeline_dynamic->>'bounce_with_prev')::int, 0) + 1)
+),
+    updated_at = now()
+WHERE id = $1 AND pipeline_kind IS NOT NULL;
+
+-- name: IncrementBounceWithNext :one
+-- Atomic increment of bounce_with_next returning the new value. Called
+-- during the verdict deny path: the upstream agent gets ++ on its
+-- outgoing bounce counter. The caller compares the returned value with
+-- pipeline_base.bounce_cap to decide whether to set escalated.
+UPDATE issue
+SET pipeline_dynamic = jsonb_set(
+    COALESCE(pipeline_dynamic, '{}'::jsonb),
+    '{bounce_with_next}',
+    to_jsonb(COALESCE((pipeline_dynamic->>'bounce_with_next')::int, 0) + 1)
+),
+    updated_at = now()
+WHERE id = $1 AND pipeline_kind IS NOT NULL
+RETURNING
+    (pipeline_dynamic->>'bounce_with_next')::int AS new_bounce_with_next,
+    (pipeline_dynamic->>'bounce_with_prev')::int AS bounce_with_prev,
+    (pipeline_dynamic->>'escalated')::boolean AS escalated,
+    (pipeline_base->>'bounce_cap')::int AS bounce_cap;
+
+-- name: SetIssuePipelineEscalated :exec
+-- Atomically sets escalated=true on pipeline_dynamic. Called when
+-- bounce_with_next exceeds bounce_cap in the deny path.
+UPDATE issue
+SET pipeline_dynamic = jsonb_set(
+    COALESCE(pipeline_dynamic, '{}'::jsonb),
+    '{escalated}',
+    'true'::jsonb
+),
+    updated_at = now()
+WHERE id = $1 AND pipeline_kind IS NOT NULL;
+
+-- name: ResetIssuePipelineEscalated :exec
+-- Clears the escalated flag when an escalation is resolved by the PM.
+UPDATE issue
+SET pipeline_dynamic = jsonb_set(
+    COALESCE(pipeline_dynamic, '{}'::jsonb),
+    '{escalated}',
+    'false'::jsonb
+),
+    updated_at = now()
+WHERE id = $1 AND pipeline_kind IS NOT NULL;

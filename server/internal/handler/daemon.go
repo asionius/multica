@@ -1343,6 +1343,24 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				resp.PipelineDynamic = json.RawMessage(ps.PipelineDynamic)
 			}
 		}
+
+		// IssueEvent structured wakeup (migration 098): for comment-triggered
+		// tasks, try to surface the oldest unconsumed event so the daemon
+		// injects a typed wakeup payload instead of raw comment text. This
+		// lets agents skip the `### [REVIEW]` magic-header grep. The event is
+		// NOT consumed here — the daemon marks it consumed right before
+		// executing the agent, ensuring exactly-once delivery even on retry.
+		if task.TriggerCommentID.Valid {
+			if ev, evErr := h.Queries.GetFreshIssueEvent(r.Context(), task.IssueID); evErr == nil {
+				var payload map[string]interface{}
+				if json.Unmarshal(ev.Payload, &payload) == nil {
+					feedback, _ := payload["feedback"].(string)
+					resp.WakeupEventID = uuidToString(ev.ID)
+					resp.WakeupEventKind = ev.Kind
+					resp.WakeupEventFeedback = feedback
+				}
+			}
+		}
 	}
 
 	// Chat task: populate workspace/session info from the chat_session table.
