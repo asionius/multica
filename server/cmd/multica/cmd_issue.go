@@ -227,6 +227,25 @@ var issueCancelTaskCmd = &cobra.Command{
 	RunE: runIssueCancelTask,
 }
 
+var issueCreateTaskCmd = &cobra.Command{
+	Use:   "create-task <issue-id>",
+	Short: "Create a bare task for an issue (no agent required)",
+	Args:  exactArgs(1),
+	RunE:  runIssueCreateTask,
+}
+
+var issueReportMessagesCmd = &cobra.Command{
+	Use:   "report-messages <task-id>",
+	Short: "Report (push) execution messages for a task",
+	Long: "Upload a batch of execution messages for a task. Messages are read from " +
+		"stdin by default, or from a file via --file. The input must be a JSON object " +
+		"with a \"messages\" array:\n\n" +
+		"  {\"messages\":[{\"seq\":1,\"type\":\"text\",\"content\":\"hello\"}]}\n\n" +
+		"Use --issue to scope short-ID resolution to a specific issue.",
+	Args: exactArgs(1),
+	RunE: runIssueReportMessages,
+}
+
 var issueSearchCmd = &cobra.Command{
 	Use:   "search <query>",
 	Short: "Search issues by title or description",
@@ -277,6 +296,8 @@ func init() {
 	issueCmd.AddCommand(issueRerunCmd)
 	issueCmd.AddCommand(issueResumeCmd)
 	issueCmd.AddCommand(issueCancelTaskCmd)
+	issueCmd.AddCommand(issueCreateTaskCmd)
+	issueCmd.AddCommand(issueReportMessagesCmd)
 	issueCmd.AddCommand(issueSearchCmd)
 	issueCmd.AddCommand(issueUsageCmd)
 	issueCmd.AddCommand(issueTimelineCmd)
@@ -375,10 +396,20 @@ func init() {
 	// issue cancel-task
 	issueCancelTaskCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCancelTaskCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
+
+	// issue create-task
+	issueCreateTaskCmd.Flags().String("output", "json", "Output format: table or json")
+
 	// issue run-messages
 	issueRunMessagesCmd.Flags().String("output", "json", "Output format: table or json")
 	issueRunMessagesCmd.Flags().Int("since", 0, "Only return messages after this sequence number")
 	issueRunMessagesCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
+
+	// issue report-messages
+	issueReportMessagesCmd.Flags().String("file", "", "Read JSON messages from file")
+	issueReportMessagesCmd.Flags().Bool("stdin", false, "Read JSON messages from stdin (mutually exclusive with --file)")
+	issueReportMessagesCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
+	issueReportMessagesCmd.Flags().String("output", "json", "Output format (json)")
 
 	// issue comment add
 	issueCommentAddCmd.Flags().String("content", "", "Comment content (decodes \\n, \\r, \\t, \\\\; pipe via --content-stdin for multi-line bodies or to preserve literal backslashes)")
@@ -1416,6 +1447,122 @@ func runIssueCancelTask(cmd *cobra.Command, args []string) error {
 		status = "cancelled"
 	}
 	fmt.Fprintf(os.Stdout, "Task %s -> status=%s\n", taskRef.ID, status)
+	return nil
+}
+
+func runIssueCreateTask(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+
+	var result map[string]any
+	path := "/api/issues/" + issueRef.ID + "/tasks"
+	if err := client.PostJSON(ctx, path, map[string]any{}, &result); err != nil {
+		return fmt.Errorf("create task: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+	fmt.Fprintf(os.Stdout, "Created bare task %s\n", strVal(result, "id"))
+	return nil
+}
+
+// runIssueReportMessages uploads a batch of execution messages for a task.
+// Messages are read from stdin or a file via --file as a JSON object with a
+// "messages" array, matching the daemon's TaskMessageBatchRequest schema.
+func runIssueReportMessages(cmd *cobra.Command, args []string) error {
+	// Validate flags early — before any network calls.
+	filePath, _ := cmd.Flags().GetString("file")
+	useStdin, _ := cmd.Flags().GetBool("stdin")
+	if filePath != "" && useStdin {
+		return fmt.Errorf("--file and --stdin are mutually exclusive")
+	}
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	issueScope := ""
+	if issueInput, _ := cmd.Flags().GetString("issue"); issueInput != "" {
+		issueRef, err := resolveIssueRef(ctx, client, issueInput)
+		if err != nil {
+			return fmt.Errorf("resolve issue: %w", err)
+		}
+		issueScope = issueRef.ID
+	}
+	taskRef, err := resolveTaskRunID(ctx, client, issueScope, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve task run: %w", err)
+	}
+
+	// Read messages from --file, stdin, or complain.
+	var inputData []byte
+	if filePath != "" {
+		inputData, err = os.ReadFile(filePath)
+		if err != nil {
+			return fmt.Errorf("read --file: %w", err)
+		}
+	} else if useStdin {
+		inputData, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+	} else {
+		// Default: read from stdin when neither flag is given (pipe ergonomics).
+		inputData, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+	}
+
+	if len(strings.TrimSpace(string(inputData))) == 0 {
+		return fmt.Errorf("empty input")
+	}
+
+	// Accept both {"messages":[...]} and bare [...] forms.
+	trimmed := strings.TrimSpace(string(inputData))
+	var payload map[string]any
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		// Bare array: wrap into {"messages": [...]}
+		var msgs []any
+		if err := json.Unmarshal(inputData, &msgs); err != nil {
+			return fmt.Errorf("parse messages JSON: %w", err)
+		}
+		payload = map[string]any{"messages": msgs}
+	} else {
+		if err := json.Unmarshal(inputData, &payload); err != nil {
+			return fmt.Errorf("parse messages JSON: %w", err)
+		}
+		if payload["messages"] == nil {
+			return fmt.Errorf("input must contain a \"messages\" array")
+		}
+	}
+
+	path := "/api/tasks/" + url.PathEscape(taskRef.ID) + "/messages"
+
+	var result map[string]any
+	if err := client.PostJSON(ctx, path, payload, &result); err != nil {
+		return fmt.Errorf("report messages: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	_ = cli.PrintJSON(os.Stdout, result)
+	_ = output
 	return nil
 }
 

@@ -25,6 +25,36 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// CreateTaskForIssue creates a bare task (no agent_id) for the issue. This allows
+// external execution engines (CLI scripts, etc.) to acquire a task_id to upload
+// messages against without needing an agent binding.
+func (h *Handler) CreateTaskForIssue(w http.ResponseWriter, r *http.Request) {
+	_, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	issueID := chi.URLParam(r, "id")
+	issueUUID, ok := parseUUIDOrBadRequest(w, issueID, "issue id")
+	if !ok {
+		return
+	}
+
+	issue, err := h.Queries.GetIssue(r.Context(), issueUUID)
+	if err != nil || uuidToString(issue.WorkspaceID) != workspaceID {
+		writeError(w, http.StatusNotFound, "issue not found")
+		return
+	}
+
+	task, err := h.TaskService.CreateBareTask(r.Context(), issueUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, taskToResponse(task))
+}
+
 // IssueResponse is the JSON response for an issue.
 type IssueResponse struct {
 	ID            string                  `json:"id"`

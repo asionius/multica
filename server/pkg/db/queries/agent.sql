@@ -74,6 +74,17 @@ SELECT * FROM agent_task_queue
 WHERE agent_id = $1
 ORDER BY created_at DESC;
 
+-- name: CreateBareTask :one
+-- Bare tasks have no agent or runtime. They act purely as a container for
+-- execution messages (e.g. from an external script via CLI).
+INSERT INTO agent_task_queue (
+    issue_id, status, priority, force_fresh_session, is_leader_task
+)
+VALUES (
+    $1, 'queued', $2, FALSE, FALSE
+)
+RETURNING *;
+
 -- name: CreateAgentTask :one
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,

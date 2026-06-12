@@ -1617,3 +1617,247 @@ func TestValidIssueStatuses(t *testing.T) {
 		t.Errorf("validIssueStatuses has %d entries, expected %d", len(validIssueStatuses), len(expected))
 	}
 }
+
+func TestRunIssueReportMessagesWithFile(t *testing.T) {
+	issueID := "1881a167-4bb6-4602-944b-f40ce4192fe6"
+	taskID := "abcd1234-0000-0000-0000-000000000000"
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/issues/" + issueID + "/task-runs":
+			json.NewEncoder(w).Encode([]map[string]any{{"id": taskID}})
+		case "/api/tasks/" + taskID + "/messages":
+			gotMethod = r.Method
+			gotPath = r.URL.Path
+			json.NewDecoder(r.Body).Decode(&gotBody)
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	// Write a temp file with the message payload.
+	payload := `{"messages":[{"seq":1,"type":"text","content":"hello"}]}`
+	tmp, err := os.CreateTemp("", "report-messages-test-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(payload); err != nil {
+		tmp.Close()
+		t.Fatal(err)
+	}
+	tmp.Close()
+
+	cmd := &cobra.Command{Use: "report-messages"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().Bool("stdin", false, "")
+	cmd.Flags().String("issue", "", "")
+	cmd.Flags().String("output", "json", "")
+	_ = cmd.Flags().Set("file", tmp.Name())
+
+	if err := runIssueReportMessages(cmd, []string{taskID}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != "POST" {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/tasks/"+taskID+"/messages" {
+		t.Fatalf("path = %q, want /api/tasks/%s/messages", gotPath, taskID)
+	}
+	if gotBody == nil || gotBody["messages"] == nil {
+		t.Fatalf("body missing messages array: %v", gotBody)
+	}
+}
+
+func TestRunIssueReportMessagesWithStdin(t *testing.T) {
+	issueID := "1881a167-4bb6-4602-944b-f40ce4192fe6"
+	taskID := "abcd1234-0000-0000-0000-000000000000"
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/issues/" + issueID + "/task-runs":
+			json.NewEncoder(w).Encode([]map[string]any{{"id": taskID}})
+		case "/api/tasks/" + taskID + "/messages":
+			gotMethod = r.Method
+			gotPath = r.URL.Path
+			json.NewDecoder(r.Body).Decode(&gotBody)
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := &cobra.Command{Use: "report-messages"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().Bool("stdin", false, "")
+	cmd.Flags().String("issue", "", "")
+	cmd.Flags().String("output", "json", "")
+	_ = cmd.Flags().Set("stdin", "true")
+
+	pipeStdin(t, `{"messages":[{"seq":2,"type":"tool_use","tool":"read","content":"read file"}]}`, func() {
+		if err := runIssueReportMessages(cmd, []string{taskID}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	if gotMethod != "POST" {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/tasks/"+taskID+"/messages" {
+		t.Fatalf("path = %q, want /api/tasks/%s/messages", gotPath, taskID)
+	}
+	if gotBody == nil || gotBody["messages"] == nil {
+		t.Fatalf("body missing messages array: %v", gotBody)
+	}
+}
+
+func TestRunIssueReportMessagesMutuallyExclusive(t *testing.T) {
+	cmd := &cobra.Command{Use: "report-messages"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().Bool("stdin", false, "")
+	cmd.Flags().String("issue", "", "")
+	cmd.Flags().String("output", "json", "")
+	_ = cmd.Flags().Set("file", "/tmp/some.json")
+	_ = cmd.Flags().Set("stdin", "true")
+
+	err := runIssueReportMessages(cmd, []string{"some-task-id"})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected mutually exclusive error, got: %v", err)
+	}
+}
+
+func TestRunIssueReportMessagesResolvesShortTaskPrefix(t *testing.T) {
+	issueID := "1881a167-4bb6-4602-944b-f40ce4192fe6"
+	taskID := "abcd1234-0000-0000-0000-000000000000"
+	var gotPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/issues/MUL-1852":
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         issueID,
+				"identifier": "MUL-1852",
+			})
+		case "/api/issues/" + issueID + "/task-runs":
+			json.NewEncoder(w).Encode([]map[string]any{{"id": taskID}})
+		case "/api/tasks/" + taskID + "/messages":
+			gotPath = r.URL.Path
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := &cobra.Command{Use: "report-messages"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().Bool("stdin", false, "")
+	cmd.Flags().String("issue", "", "")
+	cmd.Flags().String("output", "json", "")
+	_ = cmd.Flags().Set("issue", "MUL-1852")
+
+	pipeStdin(t, `{"messages":[{"seq":3,"type":"text","content":"short id test"}]}`, func() {
+		if err := runIssueReportMessages(cmd, []string{"abcd"}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	if gotPath != "/api/tasks/"+taskID+"/messages" {
+		t.Fatalf("path = %q, want /api/tasks/%s/messages", gotPath, taskID)
+	}
+}
+
+func TestRunIssueReportMessagesBareArray(t *testing.T) {
+	taskID := "abcd1234-0000-0000-0000-000000000000"
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tasks/"+taskID+"/messages" {
+			json.NewDecoder(r.Body).Decode(&gotBody)
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := &cobra.Command{Use: "report-messages"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().Bool("stdin", false, "")
+	cmd.Flags().String("issue", "", "")
+	cmd.Flags().String("output", "json", "")
+
+	// Bare array wrapped into {"messages": [...]}
+	pipeStdin(t, `[{"seq":4,"type":"text","content":"bare array"}]`, func() {
+		if err := runIssueReportMessages(cmd, []string{taskID}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	if gotBody == nil || gotBody["messages"] == nil {
+		t.Fatalf("body missing messages array: %v", gotBody)
+	}
+	msgs, _ := gotBody["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+}
+
+func TestRunIssueCreateTask(t *testing.T) {
+	issueID := "1881a167-4bb6-4602-944b-f40ce4192fe6"
+	taskID := "abcd1234-0000-0000-0000-000000000000"
+	var gotMethod, gotPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/issues/MUL-1852":
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         issueID,
+				"identifier": "MUL-1852",
+			})
+		case "/api/issues/" + issueID + "/tasks":
+			gotMethod = r.Method
+			gotPath = r.URL.Path
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"id": taskID})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := &cobra.Command{Use: "create-task"}
+	cmd.Flags().String("output", "json", "")
+
+	if err := runIssueCreateTask(cmd, []string{"MUL-1852"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != "POST" {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/issues/"+issueID+"/tasks" {
+		t.Fatalf("path = %q, want /api/issues/%s/tasks", gotPath, issueID)
+	}
+}

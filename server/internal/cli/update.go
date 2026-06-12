@@ -221,6 +221,31 @@ func verifyAssetSHA256(data []byte, expectedHex, assetName string) error {
 	return nil
 }
 
+// setGitHubHeaders sets required and optional GitHub API headers.
+// GitHub API requires a User-Agent header; Go's http.Client does not set one by
+// default, and requests without it get 403 Forbidden.
+// GITHUB_TOKEN / GH_TOKEN is optional — without it the anonymous rate limit is
+// 60 req/hr; a token bumps it to 5,000 req/hr (no scopes needed).
+func setGitHubHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", "multica-cli")
+	for _, key := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
+		if token := os.Getenv(key); token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+			return
+		}
+	}
+}
+
+// readErrorBody reads up to 512 bytes of the response body for inclusion in an
+// error message. It does not close the body — the caller's defer is responsible.
+func readErrorBody(resp *http.Response) string {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if err != nil {
+		return ""
+	}
+	return string(body)
+}
+
 func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/asionius/multica/releases/tags/"+tag, nil)
@@ -228,6 +253,7 @@ func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
+	setGitHubHeaders(req)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -236,7 +262,7 @@ func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, readErrorBody(resp))
 	}
 
 	var release GitHubRelease
@@ -254,6 +280,7 @@ func FetchLatestRelease() (*GitHubRelease, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
+	setGitHubHeaders(req)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -262,7 +289,7 @@ func FetchLatestRelease() (*GitHubRelease, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, readErrorBody(resp))
 	}
 
 	var release GitHubRelease

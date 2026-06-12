@@ -538,6 +538,17 @@ type QuickCreateContext struct {
 // QuickCreateContextType marks a task as a quick-create job.
 const QuickCreateContextType = "quick_create"
 
+// CreateBareTask creates an agentless task for an issue. A bare task cannot be
+// claimed by any agent since it lacks agent_id and runtime_id; it acts purely
+// as a container for tracking execution messages uploaded by an external actor
+// (e.g. via `multica issue report-messages`).
+func (s *TaskService) CreateBareTask(ctx context.Context, issueID pgtype.UUID) (db.AgentTaskQueue, error) {
+	return s.Queries.CreateBareTask(ctx, db.CreateBareTaskParams{
+		IssueID:  issueID,
+		Priority: 0,
+	})
+}
+
 // EnqueueQuickCreateTask creates a queued task that has no issue / chat /
 // autopilot link — the user's natural-language prompt is stored in the
 // task's context JSONB and the agent is expected to translate it into a

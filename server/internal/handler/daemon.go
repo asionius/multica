@@ -1854,6 +1854,45 @@ type TaskMessageBatchRequest struct {
 	Messages []TaskMessageRequest `json:"messages"`
 }
 
+// persistTaskMessages redacts and persists a batch of task messages, then
+// publishes them via WebSocket. Used by both the daemon and user-facing
+// report-message paths.
+func (h *Handler) persistTaskMessages(ctx context.Context, task db.AgentTaskQueue, workspaceID string, taskID string, messages []TaskMessageRequest) {
+	for _, msg := range messages {
+		// Redact sensitive information before persisting or broadcasting.
+		msg.Content = redact.Text(msg.Content)
+		msg.Output = redact.Text(msg.Output)
+		msg.Input = redact.InputMap(msg.Input)
+
+		var inputJSON []byte
+		if msg.Input != nil {
+			inputJSON, _ = json.Marshal(msg.Input)
+		}
+		h.Queries.CreateTaskMessage(ctx, db.CreateTaskMessageParams{
+			TaskID:  parseUUID(taskID),
+			Seq:     int32(msg.Seq),
+			Type:    msg.Type,
+			Tool:    pgtype.Text{String: msg.Tool, Valid: msg.Tool != ""},
+			Content: pgtype.Text{String: msg.Content, Valid: msg.Content != ""},
+			Input:   inputJSON,
+			Output:  pgtype.Text{String: msg.Output, Valid: msg.Output != ""},
+		})
+
+		if workspaceID != "" {
+			h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID, protocol.TaskMessagePayload{
+				TaskID:  taskID,
+				IssueID: uuidToString(task.IssueID),
+				Seq:     msg.Seq,
+				Type:    msg.Type,
+				Tool:    msg.Tool,
+				Content: msg.Content,
+				Input:   msg.Input,
+				Output:  msg.Output,
+			})
+		}
+	}
+}
+
 // ReportTaskMessages receives a batch of agent execution messages from the daemon.
 func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
@@ -1886,40 +1925,67 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	for _, msg := range req.Messages {
-		// Redact sensitive information before persisting or broadcasting.
-		msg.Content = redact.Text(msg.Content)
-		msg.Output = redact.Text(msg.Output)
-		msg.Input = redact.InputMap(msg.Input)
+	h.persistTaskMessages(r.Context(), task, workspaceID, taskID, req.Messages)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
 
-		var inputJSON []byte
-		if msg.Input != nil {
-			inputJSON, _ = json.Marshal(msg.Input)
-		}
-		h.Queries.CreateTaskMessage(r.Context(), db.CreateTaskMessageParams{
-			TaskID:  parseUUID(taskID),
-			Seq:     int32(msg.Seq),
-			Type:    msg.Type,
-			Tool:    pgtype.Text{String: msg.Tool, Valid: msg.Tool != ""},
-			Content: pgtype.Text{String: msg.Content, Valid: msg.Content != ""},
-			Input:   inputJSON,
-			Output:  pgtype.Text{String: msg.Output, Valid: msg.Output != ""},
-		})
-
-		if workspaceID != "" {
-			h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID, protocol.TaskMessagePayload{
-				TaskID:  taskID,
-				IssueID: uuidToString(task.IssueID),
-				Seq:     msg.Seq,
-				Type:    msg.Type,
-				Tool:    msg.Tool,
-				Content: msg.Content,
-				Input:   msg.Input,
-				Output:  msg.Output,
-			})
-		}
+// ReportTaskMessagesByUser receives a batch of execution messages from a user
+// (CLI or frontend). It verifies the caller owns the task — chat tasks are
+// gated by creator, issue tasks by workspace membership — before persisting.
+func (h *Handler) ReportTaskMessagesByUser(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	taskID := chi.URLParam(r, "taskId")
+	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task id")
+	if !ok {
+		return
 	}
 
+	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+
+	// Verify ownership: same two-branch pattern as CancelTaskByUser.
+	if task.ChatSessionID.Valid {
+		cs, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
+			ID:          task.ChatSessionID,
+			WorkspaceID: parseUUID(workspaceID),
+		})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		if uuidToString(cs.CreatorID) != userID {
+			writeError(w, http.StatusForbidden, "not your task")
+			return
+		}
+	} else if task.IssueID.Valid {
+		issue, err := h.Queries.GetIssue(r.Context(), task.IssueID)
+		if err != nil || uuidToString(issue.WorkspaceID) != workspaceID {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+	} else {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+
+	var req TaskMessageBatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Messages) == 0 {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+
+	h.persistTaskMessages(r.Context(), task, workspaceID, taskID, req.Messages)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
