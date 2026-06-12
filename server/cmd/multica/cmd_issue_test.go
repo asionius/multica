@@ -1861,3 +1861,101 @@ func TestRunIssueCreateTask(t *testing.T) {
 		t.Fatalf("path = %q, want /api/issues/%s/tasks", gotPath, issueID)
 	}
 }
+
+func TestRunIssueReportUsageWithFile(t *testing.T) {
+	taskID := "abcd1234-0000-0000-0000-000000000000"
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tasks/"+taskID+"/usage" {
+			gotMethod = r.Method
+			gotPath = r.URL.Path
+			json.NewDecoder(r.Body).Decode(&gotBody)
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	payload := `{"usage":[{"provider":"openai","model":"gpt-4","input_tokens":1500,"output_tokens":600}]}`
+	tmp, err := os.CreateTemp("", "report-usage-test-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(payload); err != nil {
+		tmp.Close()
+		t.Fatal(err)
+	}
+	tmp.Close()
+
+	cmd := &cobra.Command{Use: "report-usage"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().Bool("stdin", false, "")
+	cmd.Flags().String("issue", "", "")
+	cmd.Flags().String("output", "json", "")
+	_ = cmd.Flags().Set("file", tmp.Name())
+
+	if err := runIssueReportUsage(cmd, []string{taskID}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != "POST" {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/tasks/"+taskID+"/usage" {
+		t.Fatalf("path = %q, want /api/tasks/%s/usage", gotPath, taskID)
+	}
+	if gotBody == nil || gotBody["usage"] == nil {
+		t.Fatalf("body missing usage array: %v", gotBody)
+	}
+}
+
+func TestRunIssueReportUsageBareArray(t *testing.T) {
+	taskID := "abcd1234-0000-0000-0000-000000000000"
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tasks/"+taskID+"/usage" {
+			json.NewDecoder(r.Body).Decode(&gotBody)
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := &cobra.Command{Use: "report-usage"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().Bool("stdin", false, "")
+	cmd.Flags().String("issue", "", "")
+	cmd.Flags().String("output", "json", "")
+
+	pipeStdin(t, `[{"provider":"anthropic","model":"claude-4","input_tokens":800}]`, func() {
+		if err := runIssueReportUsage(cmd, []string{taskID}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	if gotBody == nil || gotBody["usage"] == nil {
+		t.Fatalf("body missing usage array: %v", gotBody)
+	}
+}
+
+func TestRunIssueReportUsageMutuallyExclusive(t *testing.T) {
+	cmd := &cobra.Command{Use: "report-usage"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().Bool("stdin", false, "")
+	cmd.Flags().String("output", "json", "")
+	_ = cmd.Flags().Set("file", "/tmp/some.json")
+	_ = cmd.Flags().Set("stdin", "true")
+
+	err := runIssueReportUsage(cmd, []string{"some-task-id"})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected mutually exclusive error, got: %v", err)
+	}
+}

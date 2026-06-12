@@ -246,6 +246,17 @@ var issueReportMessagesCmd = &cobra.Command{
 	RunE: runIssueReportMessages,
 }
 
+var issueReportUsageCmd = &cobra.Command{
+	Use:   "report-usage <task-id>",
+	Short: "Report (push) token usage for a task",
+	Long: "Upload token usage data for a task. The input must be a JSON object " +
+		"with a \"usage\" array:\n\n" +
+		"  {\"usage\":[{\"provider\":\"openai\",\"model\":\"gpt-4\",\"input_tokens\":1500,\"output_tokens\":600}]}\n\n" +
+		"Use --issue to scope short-ID resolution to a specific issue.",
+	Args: exactArgs(1),
+	RunE: runIssueReportUsage,
+}
+
 var issueSearchCmd = &cobra.Command{
 	Use:   "search <query>",
 	Short: "Search issues by title or description",
@@ -298,6 +309,7 @@ func init() {
 	issueCmd.AddCommand(issueCancelTaskCmd)
 	issueCmd.AddCommand(issueCreateTaskCmd)
 	issueCmd.AddCommand(issueReportMessagesCmd)
+	issueCmd.AddCommand(issueReportUsageCmd)
 	issueCmd.AddCommand(issueSearchCmd)
 	issueCmd.AddCommand(issueUsageCmd)
 	issueCmd.AddCommand(issueTimelineCmd)
@@ -410,6 +422,12 @@ func init() {
 	issueReportMessagesCmd.Flags().Bool("stdin", false, "Read JSON messages from stdin (mutually exclusive with --file)")
 	issueReportMessagesCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
 	issueReportMessagesCmd.Flags().String("output", "json", "Output format (json)")
+
+	// issue report-usage
+	issueReportUsageCmd.Flags().String("file", "", "Read JSON usage from file")
+	issueReportUsageCmd.Flags().Bool("stdin", false, "Read JSON usage from stdin (mutually exclusive with --file)")
+	issueReportUsageCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
+	issueReportUsageCmd.Flags().String("output", "json", "Output format (json)")
 
 	// issue comment add
 	issueCommentAddCmd.Flags().String("content", "", "Comment content (decodes \\n, \\r, \\t, \\\\; pipe via --content-stdin for multi-line bodies or to preserve literal backslashes)")
@@ -1558,6 +1576,86 @@ func runIssueReportMessages(cmd *cobra.Command, args []string) error {
 	var result map[string]any
 	if err := client.PostJSON(ctx, path, payload, &result); err != nil {
 		return fmt.Errorf("report messages: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	_ = cli.PrintJSON(os.Stdout, result)
+	_ = output
+	return nil
+}
+
+func runIssueReportUsage(cmd *cobra.Command, args []string) error {
+	filePath, _ := cmd.Flags().GetString("file")
+	useStdin, _ := cmd.Flags().GetBool("stdin")
+	if filePath != "" && useStdin {
+		return fmt.Errorf("--file and --stdin are mutually exclusive")
+	}
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	issueScope := ""
+	if issueInput, _ := cmd.Flags().GetString("issue"); issueInput != "" {
+		issueRef, err := resolveIssueRef(ctx, client, issueInput)
+		if err != nil {
+			return fmt.Errorf("resolve issue: %w", err)
+		}
+		issueScope = issueRef.ID
+	}
+	taskRef, err := resolveTaskRunID(ctx, client, issueScope, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve task run: %w", err)
+	}
+
+	var inputData []byte
+	if filePath != "" {
+		inputData, err = os.ReadFile(filePath)
+		if err != nil {
+			return fmt.Errorf("read --file: %w", err)
+		}
+	} else if useStdin {
+		inputData, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+	} else {
+		inputData, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+	}
+
+	if len(strings.TrimSpace(string(inputData))) == 0 {
+		return fmt.Errorf("empty input")
+	}
+
+	trimmed := strings.TrimSpace(string(inputData))
+	var payload map[string]any
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		var entries []any
+		if err := json.Unmarshal(inputData, &entries); err != nil {
+			return fmt.Errorf("parse usage JSON: %w", err)
+		}
+		payload = map[string]any{"usage": entries}
+	} else {
+		if err := json.Unmarshal(inputData, &payload); err != nil {
+			return fmt.Errorf("parse usage JSON: %w", err)
+		}
+		if payload["usage"] == nil {
+			return fmt.Errorf("input must contain a \"usage\" array")
+		}
+	}
+
+	path := "/api/tasks/" + url.PathEscape(taskRef.ID) + "/usage"
+
+	var result map[string]any
+	if err := client.PostJSON(ctx, path, payload, &result); err != nil {
+		return fmt.Errorf("report usage: %w", err)
 	}
 
 	output, _ := cmd.Flags().GetString("output")

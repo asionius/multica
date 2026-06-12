@@ -1790,6 +1790,77 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// ReportTaskUsageByUser receives token usage from a user (CLI or frontend).
+// It verifies the caller owns the task — chat tasks are gated by creator,
+// issue tasks by workspace membership — before persisting.
+func (h *Handler) ReportTaskUsageByUser(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	taskID := chi.URLParam(r, "taskId")
+	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task id")
+	if !ok {
+		return
+	}
+
+	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+
+	// Verify ownership: same two-branch pattern as CancelTaskByUser.
+	if task.ChatSessionID.Valid {
+		cs, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
+			ID:          task.ChatSessionID,
+			WorkspaceID: parseUUID(workspaceID),
+		})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		if uuidToString(cs.CreatorID) != userID {
+			writeError(w, http.StatusForbidden, "not your task")
+			return
+		}
+	} else if task.IssueID.Valid {
+		issue, err := h.Queries.GetIssue(r.Context(), task.IssueID)
+		if err != nil || uuidToString(issue.WorkspaceID) != workspaceID {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+	} else {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+
+	var req struct {
+		Usage []TaskUsagePayload `json:"usage"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	for _, u := range req.Usage {
+		if err := h.Queries.UpsertTaskUsage(r.Context(), db.UpsertTaskUsageParams{
+			TaskID:           taskUUID,
+			Provider:         u.Provider,
+			Model:            u.Model,
+			InputTokens:      u.InputTokens,
+			OutputTokens:     u.OutputTokens,
+			CacheReadTokens:  u.CacheReadTokens,
+			CacheWriteTokens: u.CacheWriteTokens,
+		}); err != nil {
+			slog.Warn("upsert task usage failed", "task_id", taskID, "model", u.Model, "error", err)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // GetTaskStatus returns the current status of a task.
 // Used by the daemon to check whether a task was cancelled mid-execution.
 func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
