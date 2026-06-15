@@ -422,12 +422,14 @@ func init() {
 	issueReportMessagesCmd.Flags().Bool("stdin", false, "Read JSON messages from stdin (mutually exclusive with --file)")
 	issueReportMessagesCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
 	issueReportMessagesCmd.Flags().String("output", "json", "Output format (json)")
+	issueReportMessagesCmd.Flags().String("as-agent", "", "Report messages as the specified agent (name or UUID; caller must be authorized)")
 
 	// issue report-usage
 	issueReportUsageCmd.Flags().String("file", "", "Read JSON usage from file")
 	issueReportUsageCmd.Flags().Bool("stdin", false, "Read JSON usage from stdin (mutually exclusive with --file)")
 	issueReportUsageCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
 	issueReportUsageCmd.Flags().String("output", "json", "Output format (json)")
+	issueReportUsageCmd.Flags().String("as-agent", "", "Report usage as the specified agent (name or UUID; caller must be authorized)")
 
 	// issue comment add
 	issueCommentAddCmd.Flags().String("content", "", "Comment content (decodes \\n, \\r, \\t, \\\\; pipe via --content-stdin for multi-line bodies or to preserve literal backslashes)")
@@ -436,6 +438,7 @@ func init() {
 	issueCommentAddCmd.Flags().String("parent", "", "Parent comment ID (reply to a specific comment)")
 	issueCommentAddCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 	issueCommentAddCmd.Flags().String("output", "json", "Output format: table or json")
+	issueCommentAddCmd.Flags().String("as-agent", "", "Post this comment as the specified agent (name or UUID; caller must be authorized)")
 
 	// issue search
 	issueSearchCmd.Flags().Int("limit", 20, "Maximum number of results to return")
@@ -1210,6 +1213,14 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 	if len(attachmentIDs) > 0 {
 		body["attachment_ids"] = attachmentIDs
 	}
+	if asAgent, _ := cmd.Flags().GetString("as-agent"); asAgent != "" {
+		agentID, resErr := resolveAgent(ctx, client, asAgent)
+		if resErr != nil {
+			return fmt.Errorf("resolve --as-agent: %w", resErr)
+		}
+		body["author_type"] = "agent"
+		body["author_id"] = agentID
+	}
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/issues/"+issueID+"/comments", body, &result); err != nil {
 		return fmt.Errorf("add comment: %w", err)
@@ -1569,6 +1580,16 @@ func runIssueReportMessages(cmd *cobra.Command, args []string) error {
 		if payload["messages"] == nil {
 			return fmt.Errorf("input must contain a \"messages\" array")
 		}
+	}
+
+	// Resolve --as-agent early so the author fields are included in the body.
+	if asAgent, _ := cmd.Flags().GetString("as-agent"); asAgent != "" {
+		agentID, resErr := resolveAgent(ctx, client, asAgent)
+		if resErr != nil {
+			return fmt.Errorf("resolve --as-agent: %w", resErr)
+		}
+		payload["author_type"] = "agent"
+		payload["author_id"] = agentID
 	}
 
 	path := "/api/tasks/" + url.PathEscape(taskRef.ID) + "/messages"

@@ -415,6 +415,8 @@ type CreateCommentRequest struct {
 	Type          string   `json:"type"`
 	ParentID      *string  `json:"parent_id"`
 	AttachmentIDs []string `json:"attachment_ids"`
+	AuthorType    string   `json:"author_type,omitempty"`
+	AuthorID      string   `json:"author_id,omitempty"`
 }
 
 func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
@@ -468,6 +470,30 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	// Determine author identity: agent (via X-Agent-ID header) or member.
 	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 
+	// When the caller explicitly requests agent authorship via body fields
+	// (--as-agent), validate the caller is authorized to represent that agent
+	// and override the header-based identity. Any failure is 403 — never
+	// silently falls back to member.
+	var explicitAgent bool
+	if req.AuthorType == "agent" && req.AuthorID != "" {
+		agentUUID, ok := parseUUIDOrBadRequest(w, req.AuthorID, "author_id")
+		if !ok {
+			return
+		}
+		agent, err := h.Queries.GetAgent(r.Context(), agentUUID)
+		if err != nil || uuidToString(agent.WorkspaceID) != uuidToString(issue.WorkspaceID) {
+			writeError(w, http.StatusForbidden, "agent not found in this workspace")
+			return
+		}
+		if agent.ArchivedAt.Valid {
+			writeError(w, http.StatusForbidden, "agent is archived")
+			return
+		}
+		authorType = "agent"
+		authorID = req.AuthorID
+		explicitAgent = true
+	}
+
 	// Defense against resumed-session drift: when an agent posts from inside a
 	// comment-triggered task AND the comment is being posted on that same
 	// issue, the parent_id must exactly match the task's trigger comment.
@@ -478,7 +504,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	// request, so an agent legitimately commenting on a different issue must
 	// not be blocked by its current task's trigger. Assignment-triggered
 	// tasks (no TriggerCommentID) are also unaffected.
-	if authorType == "agent" {
+	if authorType == "agent" && !explicitAgent {
 		if taskIDHeader := r.Header.Get("X-Task-ID"); taskIDHeader != "" {
 			taskUUID, parseErr := util.ParseUUID(taskIDHeader)
 			if parseErr == nil {

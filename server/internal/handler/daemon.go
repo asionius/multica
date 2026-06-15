@@ -1837,11 +1837,30 @@ func (h *Handler) ReportTaskUsageByUser(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req struct {
-		Usage []TaskUsagePayload `json:"usage"`
+		Usage      []TaskUsagePayload `json:"usage"`
+		AuthorType string             `json:"author_type,omitempty"`
+		AuthorID   string             `json:"author_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+
+	// Validate explicit agent authorship (--as-agent). Reject on failure.
+	if req.AuthorType == "agent" && req.AuthorID != "" {
+		agentUUID, ok := parseUUIDOrBadRequest(w, req.AuthorID, "author_id")
+		if !ok {
+			return
+		}
+		agent, err := h.Queries.GetAgent(r.Context(), agentUUID)
+		if err != nil || uuidToString(agent.WorkspaceID) != workspaceID {
+			writeError(w, http.StatusForbidden, "agent not found in this workspace")
+			return
+		}
+		if agent.ArchivedAt.Valid {
+			writeError(w, http.StatusForbidden, "agent is archived")
+			return
+		}
 	}
 
 	for _, u := range req.Usage {
@@ -1922,13 +1941,16 @@ type TaskMessageRequest struct {
 }
 
 type TaskMessageBatchRequest struct {
-	Messages []TaskMessageRequest `json:"messages"`
+	Messages   []TaskMessageRequest `json:"messages"`
+	AuthorType string               `json:"author_type,omitempty"`
+	AuthorID   string               `json:"author_id,omitempty"`
 }
 
 // persistTaskMessages redacts and persists a batch of task messages, then
 // publishes them via WebSocket. Used by both the daemon and user-facing
-// report-message paths.
-func (h *Handler) persistTaskMessages(ctx context.Context, task db.AgentTaskQueue, workspaceID string, taskID string, messages []TaskMessageRequest) {
+// report-message paths. When actorType is non-empty it is used for the
+// WebSocket event instead of the default ("system", "").
+func (h *Handler) persistTaskMessages(ctx context.Context, task db.AgentTaskQueue, workspaceID string, taskID string, messages []TaskMessageRequest, actorType, actorID string) {
 	for _, msg := range messages {
 		// Redact sensitive information before persisting or broadcasting.
 		msg.Content = redact.Text(msg.Content)
@@ -1950,7 +1972,13 @@ func (h *Handler) persistTaskMessages(ctx context.Context, task db.AgentTaskQueu
 		})
 
 		if workspaceID != "" {
-			h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID, protocol.TaskMessagePayload{
+			evtActorType := "system"
+			evtActorID := ""
+			if actorType != "" {
+				evtActorType = actorType
+				evtActorID = actorID
+			}
+			h.publishTask(protocol.EventTaskMessage, workspaceID, evtActorType, evtActorID, taskID, protocol.TaskMessagePayload{
 				TaskID:  taskID,
 				IssueID: uuidToString(task.IssueID),
 				Seq:     msg.Seq,
@@ -1996,7 +2024,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.persistTaskMessages(r.Context(), task, workspaceID, taskID, req.Messages)
+	h.persistTaskMessages(r.Context(), task, workspaceID, taskID, req.Messages, "", "")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -2056,7 +2084,29 @@ func (h *Handler) ReportTaskMessagesByUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	h.persistTaskMessages(r.Context(), task, workspaceID, taskID, req.Messages)
+	// Validate explicit agent authorship (--as-agent). Reject on failure,
+	// never silently fall back to system actor.
+	actorType := ""
+	actorID := ""
+	if req.AuthorType == "agent" && req.AuthorID != "" {
+		agentUUID, ok := parseUUIDOrBadRequest(w, req.AuthorID, "author_id")
+		if !ok {
+			return
+		}
+		agent, err := h.Queries.GetAgent(r.Context(), agentUUID)
+		if err != nil || uuidToString(agent.WorkspaceID) != workspaceID {
+			writeError(w, http.StatusForbidden, "agent not found in this workspace")
+			return
+		}
+		if agent.ArchivedAt.Valid {
+			writeError(w, http.StatusForbidden, "agent is archived")
+			return
+		}
+		actorType = "agent"
+		actorID = req.AuthorID
+	}
+
+	h.persistTaskMessages(r.Context(), task, workspaceID, taskID, req.Messages, actorType, actorID)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

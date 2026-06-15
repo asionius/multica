@@ -1862,6 +1862,154 @@ func TestRunIssueCreateTask(t *testing.T) {
 	}
 }
 
+func TestRunIssueCommentAddAsAgent(t *testing.T) {
+	issueID := "1881a167-4bb6-4602-944b-f40ce4192fe6"
+	agentID := "agent-2222-0000-0000-0000-000000000000"
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/agents":
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": agentID, "name": "CodeBot"},
+			})
+		case "/api/issues/MUL-1852":
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         issueID,
+				"identifier": "MUL-1852",
+			})
+		case "/api/issues/" + issueID + "/comments":
+			json.NewDecoder(r.Body).Decode(&gotBody)
+			json.NewEncoder(w).Encode(map[string]any{"id": "comment-1"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := &cobra.Command{Use: "add"}
+	cmd.Flags().String("content", "", "")
+	cmd.Flags().String("content-stdin", "", "")
+	cmd.Flags().String("content-file", "", "")
+	cmd.Flags().String("parent", "", "")
+	cmd.Flags().StringSlice("attachment", nil, "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String("as-agent", "", "")
+	_ = cmd.Flags().Set("content", "hello from agent")
+	_ = cmd.Flags().Set("as-agent", "CodeBot")
+
+	if err := runIssueCommentAdd(cmd, []string{"MUL-1852"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotBody == nil {
+		t.Fatal("no body received by server")
+	}
+	if aType, _ := gotBody["author_type"].(string); aType != "agent" {
+		t.Fatalf("author_type = %q, want agent", aType)
+	}
+	if aID, _ := gotBody["author_id"].(string); aID != agentID {
+		t.Fatalf("author_id = %q, want %s", aID, agentID)
+	}
+}
+
+func TestRunIssueCommentAddAsAgentNotFound(t *testing.T) {
+	issueID := "1881a167-4bb6-4602-944b-f40ce4192fe6"
+	agentID := "agent-2222-0000-0000-0000-000000000000"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/agents":
+			// CodeBot exists, but we'll search for "NonExistent"
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": agentID, "name": "CodeBot"},
+			})
+		case "/api/issues/MUL-1852":
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         issueID,
+				"identifier": "MUL-1852",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := &cobra.Command{Use: "add"}
+	cmd.Flags().String("content", "", "")
+	cmd.Flags().String("content-stdin", "", "")
+	cmd.Flags().String("content-file", "", "")
+	cmd.Flags().String("parent", "", "")
+	cmd.Flags().StringSlice("attachment", nil, "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String("as-agent", "", "")
+	_ = cmd.Flags().Set("content", "hello")
+	_ = cmd.Flags().Set("as-agent", "NonExistent")
+
+	err := runIssueCommentAdd(cmd, []string{"MUL-1852"})
+	if err == nil {
+		t.Fatal("expected error for non-existent agent")
+	}
+	if !strings.Contains(err.Error(), "no agent found") {
+		t.Fatalf("expected 'no agent found' error, got: %v", err)
+	}
+}
+
+func TestRunIssueReportMessagesAsAgent(t *testing.T) {
+	taskID := "abcd1234-0000-0000-0000-000000000000"
+	agentID := "agent-2222-0000-0000-0000-000000000000"
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/agents":
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": agentID, "name": "CodeBot"},
+			})
+		case "/api/tasks/" + taskID + "/messages":
+			json.NewDecoder(r.Body).Decode(&gotBody)
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := &cobra.Command{Use: "report-messages"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().Bool("stdin", false, "")
+	cmd.Flags().String("issue", "", "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String("as-agent", "", "")
+	_ = cmd.Flags().Set("as-agent", "CodeBot")
+
+	pipeStdin(t, `[{"seq":1,"type":"text","content":"agent says hi"}]`, func() {
+		if err := runIssueReportMessages(cmd, []string{taskID}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	if gotBody == nil {
+		t.Fatal("no body received by server")
+	}
+	if aType, _ := gotBody["author_type"].(string); aType != "agent" {
+		t.Fatalf("author_type = %q, want agent", aType)
+	}
+	if aID, _ := gotBody["author_id"].(string); aID != agentID {
+		t.Fatalf("author_id = %q, want %s", aID, agentID)
+	}
+}
+
 func TestRunIssueReportUsageWithFile(t *testing.T) {
 	taskID := "abcd1234-0000-0000-0000-000000000000"
 	var gotMethod, gotPath string
