@@ -755,10 +755,12 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 
 const createBareTask = `-- name: CreateBareTask :one
 INSERT INTO agent_task_queue (
-    issue_id, status, priority, force_fresh_session, is_leader_task
+    issue_id, status, priority, force_fresh_session, is_leader_task,
+    dispatched_at, started_at, completed_at
 )
 VALUES (
-    $1, 'queued', $2, FALSE, FALSE
+    $1, 'completed', $2, FALSE, FALSE,
+    now(), now(), now()
 )
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task
 `
@@ -769,7 +771,9 @@ type CreateBareTaskParams struct {
 }
 
 // Bare tasks have no agent or runtime. They act purely as a container for
-// execution messages (e.g. from an external script via CLI).
+// execution messages (e.g. from an external script via CLI). They are marked
+// completed immediately so the frontend doesn't show an "agent queued" banner.
+// dispatched_at/started_at are also set so the frontend sees a full lifecycle.
 func (q *Queries) CreateBareTask(ctx context.Context, arg CreateBareTaskParams) (AgentTaskQueue, error) {
 	row := q.db.QueryRow(ctx, createBareTask, arg.IssueID, arg.Priority)
 	var i AgentTaskQueue

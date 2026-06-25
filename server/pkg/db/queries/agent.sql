@@ -76,12 +76,16 @@ ORDER BY created_at DESC;
 
 -- name: CreateBareTask :one
 -- Bare tasks have no agent or runtime. They act purely as a container for
--- execution messages (e.g. from an external script via CLI).
+-- execution messages (e.g. from an external script via CLI). They are marked
+-- completed immediately so the frontend doesn't show an "agent queued" banner.
+-- dispatched_at/started_at are also set so the frontend sees a full lifecycle.
 INSERT INTO agent_task_queue (
-    issue_id, status, priority, force_fresh_session, is_leader_task
+    issue_id, status, priority, force_fresh_session, is_leader_task,
+    dispatched_at, started_at, completed_at
 )
 VALUES (
-    $1, 'queued', $2, FALSE, FALSE
+    $1, 'completed', $2, FALSE, FALSE,
+    now(), now(), now()
 )
 RETURNING *;
 
