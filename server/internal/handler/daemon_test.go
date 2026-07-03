@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -769,6 +770,253 @@ func TestGetIssueUsage_CrossWorkspace_Returns404(t *testing.T) {
 	testHandler.GetIssueUsage(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("GetIssueUsage with cross-workspace issueId: expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestGetIssueUsage_ByModelBreakdown verifies that the per-model breakdown is
+// returned alongside the rolled-up totals. Two tasks on the same issue with
+// different models should surface two `by_model` entries, each summing only
+// that model's tokens.
+func TestGetIssueUsage_ByModelBreakdown(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("setup: get agent: %v", err)
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
+		VALUES ($1, 'usage-by-model', 'todo', 'medium', $2, 'member', 91004, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("setup: create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	// Two tasks on the issue, each with a different model so the GROUP BY
+	// tu.model in GetIssueUsageByModel yields two distinct rows.
+	tasks := []struct{ model string}{
+		{"claude-sonnet-4"},
+		{"gpt-4o"},
+	}
+	for _, tm := range tasks {
+		var taskID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, issue_id, status, runtime_id)
+			VALUES ($1, $2, 'completed', $3)
+			RETURNING id
+		`, agentID, issueID, runtimeID).Scan(&taskID); err != nil {
+			t.Fatalf("setup: create task: %v", err)
+		}
+		t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
+			VALUES ($1, 'anthropic', $2, 1000, 500, 200, 100)
+		`, taskID, tm.model); err != nil {
+			t.Fatalf("setup: insert task_usage: %v", err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequestAsUser(testUserID, "GET", "/api/issues/"+issueID+"/usage", nil)
+	req = withURLParam(req, "id", issueID)
+
+	testHandler.GetIssueUsage(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetIssueUsage: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		TotalInputTokens int64 `json:"total_input_tokens"`
+		TaskCount        int32 `json:"task_count"`
+		ByModel         []struct {
+			Model            string `json:"model"`
+			TotalInputTokens int64  `json:"total_input_tokens"`
+		} `json:"by_model"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.TotalInputTokens != 2000 {
+		t.Fatalf("total_input_tokens: expected 2000, got %d", resp.TotalInputTokens)
+	}
+	if resp.TaskCount != 2 {
+		t.Fatalf("task_count: expected 2, got %d", resp.TaskCount)
+	}
+	if len(resp.ByModel) != 2 {
+		t.Fatalf("by_model: expected 2 entries, got %d", len(resp.ByModel))
+	}
+	// Both models contribute equal input, so just assert both names are
+	// present with the right per-model sum (not folded into one row).
+	gotModels := map[string]int64{}
+	for _, m := range resp.ByModel {
+		gotModels[m.Model] = m.TotalInputTokens
+	}
+	if gotModels["claude-sonnet-4"] != 1000 {
+		t.Fatalf("by_model[claude-sonnet-4].total_input_tokens: expected 1000, got %d", gotModels["claude-sonnet-4"])
+	}
+	if gotModels["gpt-4o"] != 1000 {
+		t.Fatalf("by_model[gpt-4o].total_input_tokens: expected 1000, got %d", gotModels["gpt-4o"])
+	}
+}
+
+// TestReportTaskMessages_ReasoningText verifies that reasoning content
+// arriving in the `text` field (mirror's unified 6-field schema) is
+// persisted and returned. Before the fix, `text` was silently dropped
+// at JSON decode time because TaskMessageRequest had no Text field, so
+// reasoning rows were stored empty.
+func TestReportTaskMessages_ReasoningText(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("setup: get agent: %v", err)
+	}
+
+	var issueID, taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
+		VALUES ($1, 'reasoning-text', 'todo', 'medium', $2, 'member', 91005, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("setup: create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, issue_id, status, runtime_id)
+		VALUES ($1, $2, 'completed', $3)
+		RETURNING id
+	`, agentID, issueID, runtimeID).Scan(&taskID); err != nil {
+		t.Fatalf("setup: create task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	// Mirror sends a 3-message batch: tool_use, reasoning (via `text`),
+	// and tool_result. Only the reasoning message carries `text`.
+	body := map[string]any{
+		"messages": []map[string]any{
+			{"seq": 1, "type": "tool_use", "tool": "Read", "input": map[string]any{"file_path": "/tmp/x"}},
+			{"seq": 2, "type": "reasoning", "text": "I should read /tmp/x first to understand the structure."},
+			{"seq": 3, "type": "tool_result", "tool": "Read", "output": "file contents here"},
+		},
+	}
+	buf, _ := json.Marshal(body)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/tasks/"+taskID+"/messages", bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-ID", testUserID)
+	req = withURLParam(req, "taskId", taskID)
+	req = withChatTestWorkspaceCtx(t, req)
+
+	testHandler.ReportTaskMessagesByUser(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ReportTaskMessagesByUser: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify all three rows are persisted with the right content shape.
+	rows, err := testPool.Query(ctx,
+		`SELECT seq, type, content, tool FROM task_message WHERE task_id = $1 ORDER BY seq`,
+		taskID,
+	)
+	if err != nil {
+		t.Fatalf("query task_message: %v", err)
+	}
+	defer rows.Close()
+	got := map[int]struct {
+		Type    string
+		Content string
+		Tool    string
+	}{}
+	for rows.Next() {
+		var seq int
+		var typ string
+		var content, tool pgtype.Text
+		if err := rows.Scan(&seq, &typ, &content, &tool); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got[seq] = struct {
+			Type    string
+			Content string
+			Tool    string
+		}{typ, content.String, tool.String}
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 persisted messages, got %d", len(got))
+	}
+	if got[2].Type != "reasoning" || got[2].Content != "I should read /tmp/x first to understand the structure." {
+		t.Fatalf("reasoning row not stored correctly: %+v", got[2])
+	}
+	if got[1].Type != "tool_use" || got[1].Tool != "Read" {
+		t.Fatalf("tool_use row not stored correctly: %+v", got[1])
+	}
+
+	// Now verify ListTaskMessagesByUser surfaces reasoning via the `text`
+	// field on the response payload (so clients can render it semantically).
+	w2 := httptest.NewRecorder()
+	req2 := newRequestAsUser(testUserID, "GET", "/api/tasks/"+taskID+"/messages", nil)
+	req2 = withURLParam(req2, "taskId", taskID)
+	req2 = withChatTestWorkspaceCtx(t, req2)
+
+	testHandler.ListTaskMessagesByUser(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("ListTaskMessagesByUser: expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+
+	var resp []struct {
+		Seq     int    `json:"seq"`
+		Type    string `json:"type"`
+		Tool    string `json:"tool,omitempty"`
+		Content string `json:"content,omitempty"`
+		Text    string `json:"text,omitempty"`
+		Output  string `json:"output,omitempty"`
+	}
+	if err := json.NewDecoder(w2.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp) != 3 {
+		t.Fatalf("expected 3 messages in response, got %d", len(resp))
+	}
+	// Find the reasoning row by seq.
+	var reasoning *struct {
+		Seq     int    `json:"seq"`
+		Type    string `json:"type"`
+		Tool    string `json:"tool,omitempty"`
+		Content string `json:"content,omitempty"`
+		Text    string `json:"text,omitempty"`
+		Output  string `json:"output,omitempty"`
+	}
+	for i := range resp {
+		if resp[i].Type == "reasoning" {
+			reasoning = &resp[i]
+			break
+		}
+	}
+	if reasoning == nil {
+		t.Fatalf("no reasoning message in response: %+v", resp)
+	}
+	if reasoning.Text == "" {
+		t.Fatalf("reasoning.text empty: expected the original thinking content, got %+v", reasoning)
+	}
+	if reasoning.Text != "I should read /tmp/x first to understand the structure." {
+		t.Fatalf("reasoning.text mismatch: got %q", reasoning.Text)
 	}
 }
 

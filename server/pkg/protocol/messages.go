@@ -43,11 +43,17 @@ type TaskMessagePayload struct {
 	TaskID  string         `json:"task_id"`
 	IssueID string         `json:"issue_id,omitempty"`
 	Seq     int            `json:"seq"`
-	Type    string         `json:"type"`              // "text", "tool_use", "tool_result", "error"
-	Tool    string         `json:"tool,omitempty"`    // tool name for tool_use/tool_result
-	Content string         `json:"content,omitempty"` // text content
-	Input   map[string]any `json:"input,omitempty"`   // tool input (tool_use only)
-	Output  string         `json:"output,omitempty"`  // tool output (tool_result only)
+	Type    string         `json:"type"`               // "text", "tool_use", "tool_result", "reasoning", "error"
+	Tool    string         `json:"tool,omitempty"`     // tool name for tool_use/tool_result
+	Content string         `json:"content,omitempty"`  // text content
+	Input   map[string]any `json:"input,omitempty"`    // tool input (tool_use only)
+	Output  string         `json:"output,omitempty"`   // tool output (tool_result only)
+	// Text carries reasoning/thinking content for type=reasoning. Same
+	// underlying value as Content (server stores reasoning in the
+	// task_message.content column), surfaced as a distinct field so
+	// clients can render reasoning with its own visual treatment
+	// (collapsed, italic, etc.) rather than mixing it into the text stream.
+	Text string `json:"text,omitempty"`
 }
 
 // DaemonRegisterPayload is sent from daemon to server on connection.

@@ -68,6 +68,26 @@ FROM task_usage tu
 JOIN agent_task_queue atq ON atq.id = tu.task_id
 WHERE atq.issue_id = $1;
 
+-- name: GetIssueUsageByModel :many
+-- Per-model token breakdown for an issue. The task_usage table stores one
+-- row per (task_id, provider, model); this folds those into one row per
+-- model so the client can answer "which model burned the tokens" without
+-- re-querying. Same column shape as GetWorkspaceUsageSummary so downstream
+-- code can share formatters. Ordered by total token volume desc so the
+-- heaviest model surfaces first.
+SELECT
+    tu.model,
+    SUM(tu.input_tokens)::bigint AS total_input_tokens,
+    SUM(tu.output_tokens)::bigint AS total_output_tokens,
+    SUM(tu.cache_read_tokens)::bigint AS total_cache_read_tokens,
+    SUM(tu.cache_write_tokens)::bigint AS total_cache_write_tokens,
+    COUNT(DISTINCT tu.task_id)::int AS task_count
+FROM task_usage tu
+JOIN agent_task_queue atq ON atq.id = tu.task_id
+WHERE atq.issue_id = $1
+GROUP BY tu.model
+ORDER BY (SUM(tu.input_tokens) + SUM(tu.output_tokens)) DESC;
+
 -- name: ListDashboardUsageDaily :many
 -- Daily per-(date, model) token aggregates for the workspace, optionally
 -- scoped to a single project via sqlc.narg('project_id'). Bucketed by

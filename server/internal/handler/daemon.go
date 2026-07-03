@@ -1938,6 +1938,13 @@ type TaskMessageRequest struct {
 	Content string         `json:"content,omitempty"`
 	Input   map[string]any `json:"input,omitempty"`
 	Output  string         `json:"output,omitempty"`
+	// Text carries reasoning/thinking content from agents that emit a
+	// separate `text` field (e.g. Claude extended thinking). Persisted into
+	// the same `task_message.content` column so reasoning is queryable
+	// alongside tool_use/tool_result without a schema change. Server
+	// populates this field on read for type=reasoning so clients can
+	// render reasoning semantically rather than inferring from Content.
+	Text string `json:"text,omitempty"`
 }
 
 type TaskMessageBatchRequest struct {
@@ -1952,6 +1959,15 @@ type TaskMessageBatchRequest struct {
 // WebSocket event instead of the default ("system", "").
 func (h *Handler) persistTaskMessages(ctx context.Context, task db.AgentTaskQueue, workspaceID string, taskID string, messages []TaskMessageRequest, actorType, actorID string) {
 	for _, msg := range messages {
+		// Reasoning/thinking content arrives in the `text` field (mirror's
+		// unified 6-field schema). Fold it into Content so it lands in the
+		// existing task_message.content column — no migration needed.
+		// Prefer Content when both are set so callers that explicitly
+		// populate Content retain precedence.
+		if msg.Content == "" && msg.Text != "" {
+			msg.Content = msg.Text
+		}
+
 		// Redact sensitive information before persisting or broadcasting.
 		msg.Content = redact.Text(msg.Content)
 		msg.Output = redact.Text(msg.Output)
@@ -1978,20 +1994,37 @@ func (h *Handler) persistTaskMessages(ctx context.Context, task db.AgentTaskQueu
 				evtActorType = actorType
 				evtActorID = actorID
 			}
-			h.publishTask(protocol.EventTaskMessage, workspaceID, evtActorType, evtActorID, taskID, protocol.TaskMessagePayload{
-				TaskID:  taskID,
-				IssueID: uuidToString(task.IssueID),
-				Seq:     msg.Seq,
-				Type:    msg.Type,
-				Tool:    msg.Tool,
-				Content: msg.Content,
-				Input:   msg.Input,
-				Output:  msg.Output,
-			})
+		h.publishTask(protocol.EventTaskMessage, workspaceID, evtActorType, evtActorID, taskID, protocol.TaskMessagePayload{
+			TaskID:  taskID,
+			IssueID: uuidToString(task.IssueID),
+			Seq:     msg.Seq,
+			Type:    msg.Type,
+			Tool:    msg.Tool,
+			Content: msg.Content,
+			Input:   msg.Input,
+			Output:  msg.Output,
+			// Surface reasoning text as Text so clients can render it
+			// with its own treatment; for other types Text is empty
+			// and Content carries the payload (preserves old clients).
+			Text: reasoningText(msg.Type, msg.Text, msg.Content),
+		})
 		}
 	}
 }
 
+// reasoningText returns the text to surface in the WS payload's Text field.
+// For type=reasoning we expose the original `text` value (or Content, since
+// persistTaskMessages folds text into Content for storage). For other types
+// Text is empty so legacy clients keep reading Content.
+func reasoningText(msgType, text, content string) string {
+	if msgType != "reasoning" {
+		return ""
+	}
+	if text != "" {
+		return text
+	}
+	return content
+}
 // ReportTaskMessages receives a batch of agent execution messages from the daemon.
 func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
@@ -2160,6 +2193,12 @@ func (h *Handler) ListTaskMessages(w http.ResponseWriter, r *http.Request) {
 			Input:   input,
 			Output:  m.Output.String,
 		}
+		// For type=reasoning the original text lives in the content
+		// column (see persistTaskMessages). Surface it as Text so
+		// clients can render reasoning with its own visual treatment.
+		if m.Type == "reasoning" {
+			resp[i].Text = m.Content.String
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -2297,12 +2336,21 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 			Input:   input,
 			Output:  m.Output.String,
 		}
+		// For type=reasoning the original text lives in the content
+		// column (see persistTaskMessages). Surface it as Text so
+		// clients can render reasoning with its own visual treatment.
+		if m.Type == "reasoning" {
+			resp[i].Text = m.Content.String
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
 
 // GetIssueUsage returns aggregated token usage for all tasks belonging to an issue.
+// `by_model` carries the per-model breakdown so clients can answer "which model
+// burned the tokens" without a second round-trip; the top-level totals fold
+// those rows into a single sum for backwards-compatible callers.
 func (h *Handler) GetIssueUsage(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -2316,12 +2364,31 @@ func (h *Handler) GetIssueUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	byModel, err := h.Queries.GetIssueUsageByModel(r.Context(), issue.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get issue usage by model")
+		return
+	}
+
+	byModelResp := make([]map[string]any, 0, len(byModel))
+	for _, m := range byModel {
+		byModelResp = append(byModelResp, map[string]any{
+			"model":                  m.Model,
+			"total_input_tokens":     m.TotalInputTokens,
+			"total_output_tokens":    m.TotalOutputTokens,
+			"total_cache_read_tokens": m.TotalCacheReadTokens,
+			"total_cache_write_tokens": m.TotalCacheWriteTokens,
+			"task_count":             m.TaskCount,
+		})
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total_input_tokens":       row.TotalInputTokens,
 		"total_output_tokens":      row.TotalOutputTokens,
 		"total_cache_read_tokens":  row.TotalCacheReadTokens,
 		"total_cache_write_tokens": row.TotalCacheWriteTokens,
 		"task_count":               row.TaskCount,
+		"by_model":                 byModelResp,
 	})
 }
 

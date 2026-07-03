@@ -270,7 +270,8 @@ var issueUsageCmd = &cobra.Command{
 	Long: "Sum input/output/cache tokens across every task this issue's agents have run. " +
 		"Backed by GET /api/issues/{id}/usage which JOIN-aggregates the raw task_usage " +
 		"table by issue_id; cost is constant in days but linear in the issue's task count " +
-		"(usually small).",
+		"(usually small). The response also includes `by_model`, a per-model breakdown " +
+		"so callers can attribute tokens to a specific model name.",
 	Args: exactArgs(1),
 	RunE: runIssueUsage,
 }
@@ -2203,6 +2204,32 @@ func runIssueUsage(cmd *cobra.Command, args []string) error {
 		fmtN(usage["task_count"]),
 	}}
 	cli.PrintTable(os.Stdout, headers, rows)
+
+	// Per-model breakdown. Server returns `by_model` as an array of
+	// {model, total_*_tokens, task_count}; render it as a second table
+	// so the CLI user can answer "which model burned the tokens" in a
+	// single glance. JSON output already includes this array verbatim.
+	if byModel, ok := usage["by_model"].([]any); ok && len(byModel) > 0 {
+		fmt.Fprintln(os.Stdout)
+		fmt.Fprintln(os.Stdout, "Per-model breakdown:")
+		modelHeaders := []string{"MODEL", "INPUT", "OUTPUT", "CACHE_READ", "CACHE_WRITE", "TASKS"}
+		modelRows := make([][]string, 0, len(byModel))
+		for _, entry := range byModel {
+			m, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			modelRows = append(modelRows, []string{
+				strVal(m, "model"),
+				fmtN(m["total_input_tokens"]),
+				fmtN(m["total_output_tokens"]),
+				fmtN(m["total_cache_read_tokens"]),
+				fmtN(m["total_cache_write_tokens"]),
+				fmtN(m["task_count"]),
+			})
+		}
+		cli.PrintTable(os.Stdout, modelHeaders, modelRows)
+	}
 	return nil
 }
 

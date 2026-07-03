@@ -11,6 +11,63 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getIssueUsageByModel = `-- name: GetIssueUsageByModel :many
+SELECT
+    tu.model,
+    SUM(tu.input_tokens)::bigint AS total_input_tokens,
+    SUM(tu.output_tokens)::bigint AS total_output_tokens,
+    SUM(tu.cache_read_tokens)::bigint AS total_cache_read_tokens,
+    SUM(tu.cache_write_tokens)::bigint AS total_cache_write_tokens,
+    COUNT(DISTINCT tu.task_id)::int AS task_count
+FROM task_usage tu
+JOIN agent_task_queue atq ON atq.id = tu.task_id
+WHERE atq.issue_id = $1
+GROUP BY tu.model
+ORDER BY (SUM(tu.input_tokens) + SUM(tu.output_tokens)) DESC
+`
+
+type GetIssueUsageByModelRow struct {
+	Model                 string `json:"model"`
+	TotalInputTokens      int64  `json:"total_input_tokens"`
+	TotalOutputTokens     int64  `json:"total_output_tokens"`
+	TotalCacheReadTokens  int64  `json:"total_cache_read_tokens"`
+	TotalCacheWriteTokens int64  `json:"total_cache_write_tokens"`
+	TaskCount             int32  `json:"task_count"`
+}
+
+// Per-model token breakdown for an issue. The task_usage table stores one
+// row per (task_id, provider, model); this folds those into one row per
+// model so the client can answer "which model burned the tokens" without
+// re-querying. Same column shape as GetWorkspaceUsageSummary so downstream
+// code can share formatters. Ordered by total token volume desc so the
+// heaviest model surfaces first.
+func (q *Queries) GetIssueUsageByModel(ctx context.Context, issueID pgtype.UUID) ([]GetIssueUsageByModelRow, error) {
+	rows, err := q.db.Query(ctx, getIssueUsageByModel, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetIssueUsageByModelRow{}
+	for rows.Next() {
+		var i GetIssueUsageByModelRow
+		if err := rows.Scan(
+			&i.Model,
+			&i.TotalInputTokens,
+			&i.TotalOutputTokens,
+			&i.TotalCacheReadTokens,
+			&i.TotalCacheWriteTokens,
+			&i.TaskCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getIssueUsageSummary = `-- name: GetIssueUsageSummary :one
 SELECT
     COALESCE(SUM(tu.input_tokens), 0)::bigint AS total_input_tokens,
