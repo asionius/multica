@@ -210,9 +210,13 @@ export interface TaskMessagePayload {
   issue_id: string;
   chat_session_id?: string;
   seq: number;
-  type: "text" | "thinking" | "tool_use" | "tool_result" | "error";
+  type: "text" | "thinking" | "reasoning" | "tool_use" | "tool_result" | "error";
   tool?: string;
   content?: string;
+  // text carries reasoning content for type=reasoning (server stores it
+  // separately from content so clients can render reasoning with its own
+  // visual treatment). Undefined for other types.
+  text?: string;
   input?: Record<string, unknown>;
   output?: string;
 }

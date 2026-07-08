@@ -61,9 +61,12 @@ export const CHAT_DEFAULT_H = 600;
  */
 export interface ChatTimelineItem {
   seq: number;
-  type: "tool_use" | "tool_result" | "thinking" | "text" | "error";
+  type: "tool_use" | "tool_result" | "thinking" | "reasoning" | "text" | "error";
   tool?: string;
   content?: string;
+  // text carries reasoning content for type=reasoning. Undefined for other
+  // types. See TaskMessagePayload.text for the full rationale.
+  text?: string;
   input?: Record<string, unknown>;
   output?: string;
 }

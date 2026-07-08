@@ -61,6 +61,7 @@ function getEventColor(item: TimelineItem): EventColor {
     case "text":
       return "agent";
     case "thinking":
+    case "reasoning":
       return "thinking";
     case "tool_use":
       return "tool";
@@ -88,6 +89,7 @@ function getEventLabel(item: TimelineItem): string {
     case "text":
       return "Agent";
     case "thinking":
+    case "reasoning":
       return "Thinking";
     case "tool_use":
       return item.tool ?? "Tool";
@@ -106,6 +108,10 @@ function getEventSummary(item: TimelineItem): string {
       return item.content?.split("\n").find((l) => l.trim().length > 0) ?? "";
     case "thinking":
       return item.content?.slice(0, 200) ?? "";
+    case "reasoning":
+      // reasoning text arrives in the `text` field (server-side convention);
+      // fall back to content for safety.
+      return (item.text ?? item.content ?? "").slice(0, 200);
     case "tool_use": {
       if (!item.input) return "";
       const inp = item.input as Record<string, string>;
@@ -607,6 +613,7 @@ const TranscriptEventRow = ({
     (item.type === "tool_use" && item.input && Object.keys(item.input).length > 0) ||
     (item.type === "tool_result" && item.output && item.output.length > 0) ||
     (item.type === "thinking" && item.content && item.content.length > 0) ||
+    (item.type === "reasoning" && (item.text ?? item.content) && (item.text ?? item.content)!.length > 0) ||
     (item.type === "text" && item.content && item.content.length > 0) ||
     (item.type === "error" && item.content && item.content.length > 0);
 
@@ -628,6 +635,7 @@ const TranscriptEventRow = ({
             )}
           >
             {item.type === "thinking" && <Brain className="h-3 w-3 mr-1 shrink-0" />}
+            {item.type === "reasoning" && <Brain className="h-3 w-3 mr-1 shrink-0" />}
             {item.type === "error" && <AlertCircle className="h-3 w-3 mr-1 shrink-0" />}
             {label}
           </span>
@@ -699,6 +707,14 @@ function EventDetailContent({ item }: { item: TimelineItem }) {
       return (
         <pre className="max-h-60 overflow-auto p-3 text-[11px] text-muted-foreground whitespace-pre-wrap break-words">
           {item.content ?? ""}
+        </pre>
+      );
+    case "reasoning":
+      // reasoning text lives in `text` field (server-side convention); fall
+      // back to content for safety.
+      return (
+        <pre className="max-h-60 overflow-auto p-3 text-[11px] text-muted-foreground whitespace-pre-wrap break-words">
+          {item.text ?? item.content ?? ""}
         </pre>
       );
     case "text":

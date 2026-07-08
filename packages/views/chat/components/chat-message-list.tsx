@@ -138,6 +138,7 @@ function toTimelineItem(m: TaskMessagePayload): ChatTimelineItem {
     type: m.type,
     tool: m.tool,
     content: m.content,
+    text: m.text,
     input: m.input,
     output: m.output,
   };
@@ -465,6 +466,7 @@ function ItemRow({ item }: { item: ChatTimelineItem }) {
     case "tool_result":
       return <ToolResultRow item={item} />;
     case "thinking":
+    case "reasoning":
       return <ThinkingRow item={item} />;
     case "error":
       return <ErrorRow item={item} />;
@@ -563,7 +565,9 @@ function ToolResultRow({ item }: { item: ChatTimelineItem }) {
 
 function ThinkingRow({ item }: { item: ChatTimelineItem }) {
   const [open, setOpen] = useState(false);
-  const text = item.content ?? "";
+  // reasoning text arrives in `text` field (server-side convention); thinking
+  // uses content. Fall back across both for safety.
+  const text = item.text ?? item.content ?? "";
   if (!text) return null;
 
   const preview = text.length > 150 ? text.slice(0, 150) + "..." : text;
