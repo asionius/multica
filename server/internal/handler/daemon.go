@@ -2350,10 +2350,12 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 // GetIssueUsage returns aggregated token usage for all tasks belonging to an issue.
 // `by_model` carries the per-model breakdown so clients can answer "which model
 // burned the tokens" without a second round-trip; the top-level totals fold
-// those rows into a single sum for backwards-compatible callers. Each
-// `by_model` entry also carries a `tasks` array with per-task token counts
-// so clients can drill further (model → task). Optional `?task=<task-id>`
-// query param filters the entire response to a single task.
+// those rows into a single sum for backwards-compatible callers.
+//
+// Optional `?task` query param controls per-task detail:
+//   - absent: no `tasks` field (same shape as before)
+//   - `?task=all`: every by_model entry carries a `tasks` array with all tasks
+//   - `?task=<uuid>`: response scoped to that task only; by_model[].tasks has one entry
 func (h *Handler) GetIssueUsage(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -2361,23 +2363,105 @@ func (h *Handler) GetIssueUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional ?task=<task-id> filter. When present, validate the task
-	// belongs to this issue before filtering.
-	var taskFilter pgtype.UUID
-	if raw := r.URL.Query().Get("task"); raw != "" {
-		tid, err := util.ParseUUID(raw)
+	taskParam := r.URL.Query().Get("task")
+
+	// Per-task detail requested (?task=all or ?task=<uuid>).
+	if taskParam != "" {
+		// For ?task=<uuid>, validate the task belongs to this issue.
+		var taskFilter pgtype.UUID
+		if taskParam != "all" {
+			tid, err := util.ParseUUID(taskParam)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid task id")
+				return
+			}
+			task, err := h.Queries.GetAgentTask(r.Context(), tid)
+			if err != nil || !task.IssueID.Valid || uuidToString(task.IssueID) != uuidToString(issue.ID) {
+				writeError(w, http.StatusNotFound, "task not found in this issue")
+				return
+			}
+			taskFilter = tid
+		}
+
+		// Fetch per-(model, task) rows and fold into by_model[].tasks.
+		byModelTask, err := h.Queries.GetIssueUsageByModelAndTask(r.Context(), issue.ID)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid task id")
+			writeError(w, http.StatusInternalServerError, "failed to get issue usage by model and task")
 			return
 		}
-		task, err := h.Queries.GetAgentTask(r.Context(), tid)
-		if err != nil || !task.IssueID.Valid || uuidToString(task.IssueID) != uuidToString(issue.ID) {
-			writeError(w, http.StatusNotFound, "task not found in this issue")
-			return
+
+		var totalIn, totalOut, totalCR, totalCW int64
+		type taskEntry struct {
+			taskID                                       string
+			in, out, cr, cw                              int64
 		}
-		taskFilter = tid
+		modelAgg := make(map[string]struct {
+			in, out, cr, cw int64
+			tasks           []taskEntry
+		})
+		for _, t := range byModelTask {
+			if taskFilter.Valid && uuidToString(t.TaskID) != uuidToString(taskFilter) {
+				continue
+			}
+			totalIn += t.TotalInputTokens
+			totalOut += t.TotalOutputTokens
+			totalCR += t.TotalCacheReadTokens
+			totalCW += t.TotalCacheWriteTokens
+			m := modelAgg[t.Model]
+			m.in += t.TotalInputTokens
+			m.out += t.TotalOutputTokens
+			m.cr += t.TotalCacheReadTokens
+			m.cw += t.TotalCacheWriteTokens
+			m.tasks = append(m.tasks, taskEntry{
+				taskID: uuidToString(t.TaskID),
+				in:     t.TotalInputTokens,
+				out:    t.TotalOutputTokens,
+				cr:     t.TotalCacheReadTokens,
+				cw:     t.TotalCacheWriteTokens,
+			})
+			modelAgg[t.Model] = m
+		}
+
+		byModelResp := make([]map[string]any, 0, len(modelAgg))
+		for model, v := range modelAgg {
+			tasksArr := make([]map[string]any, 0, len(v.tasks))
+			for _, t := range v.tasks {
+				tasksArr = append(tasksArr, map[string]any{
+					"task_id":            t.taskID,
+					"input_tokens":       t.in,
+					"output_tokens":      t.out,
+					"cache_read_tokens":  t.cr,
+					"cache_write_tokens": t.cw,
+				})
+			}
+			byModelResp = append(byModelResp, map[string]any{
+				"model":                   model,
+				"total_input_tokens":      v.in,
+				"total_output_tokens":     v.out,
+				"total_cache_read_tokens":  v.cr,
+				"total_cache_write_tokens": v.cw,
+				"task_count":              len(v.tasks),
+				"tasks":                   tasksArr,
+			})
+		}
+
+		taskCount := 1
+		if taskParam == "all" {
+			taskCount = len(byModelTask)
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"total_input_tokens":       totalIn,
+			"total_output_tokens":      totalOut,
+			"total_cache_read_tokens":  totalCR,
+			"total_cache_write_tokens": totalCW,
+			"task_count":               taskCount,
+			"by_model":                 byModelResp,
+		})
+		return
 	}
 
+	// Default mode: issue-level aggregates, no per-task detail.
 	row, err := h.Queries.GetIssueUsageSummary(r.Context(), issue.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get issue usage")
@@ -2390,33 +2474,8 @@ func (h *Handler) GetIssueUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	byModelTask, err := h.Queries.GetIssueUsageByModelAndTask(r.Context(), issue.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get issue usage by model and task")
-		return
-	}
-
-	// Group per-task rows by model for folding into by_model entries.
-	tasksByModel := make(map[string][]map[string]any)
-	for _, t := range byModelTask {
-		if taskFilter.Valid && uuidToString(t.TaskID) != uuidToString(taskFilter) {
-			continue
-		}
-		tasksByModel[t.Model] = append(tasksByModel[t.Model], map[string]any{
-			"task_id":              uuidToString(t.TaskID),
-			"input_tokens":         t.TotalInputTokens,
-			"output_tokens":        t.TotalOutputTokens,
-			"cache_read_tokens":    t.TotalCacheReadTokens,
-			"cache_write_tokens":   t.TotalCacheWriteTokens,
-		})
-	}
-
 	byModelResp := make([]map[string]any, 0, len(byModel))
 	for _, m := range byModel {
-		tasks := tasksByModel[m.Model]
-		if tasks == nil {
-			tasks = []map[string]any{}
-		}
 		byModelResp = append(byModelResp, map[string]any{
 			"model":                  m.Model,
 			"total_input_tokens":     m.TotalInputTokens,
@@ -2424,7 +2483,6 @@ func (h *Handler) GetIssueUsage(w http.ResponseWriter, r *http.Request) {
 			"total_cache_read_tokens": m.TotalCacheReadTokens,
 			"total_cache_write_tokens": m.TotalCacheWriteTokens,
 			"task_count":             m.TaskCount,
-			"tasks":                  tasks,
 		})
 	}
 

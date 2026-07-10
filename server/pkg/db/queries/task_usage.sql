@@ -90,8 +90,8 @@ ORDER BY (SUM(tu.input_tokens) + SUM(tu.output_tokens)) DESC;
 
 -- name: GetIssueUsageByModelAndTask :many
 -- Per-(model, task) token breakdown. The handler folds these rows into
--- by_model[].tasks so clients can drill from model → task without a
--- second round-trip. Ordered by model then task_id for stable grouping.
+-- by_model[].tasks so clients can drill from model → task. Ordered by
+-- model then task_id for stable grouping.
 SELECT
     tu.model,
     tu.task_id,

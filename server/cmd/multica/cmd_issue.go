@@ -341,7 +341,7 @@ func init() {
 
 	// issue usage
 	issueUsageCmd.Flags().String("output", "table", "Output format: table or json")
-	issueUsageCmd.Flags().String("task", "", "Filter to a specific task (UUID or short prefix; short prefix requires issue context)")
+	issueUsageCmd.Flags().String("task", "", "Show per-task usage detail. Pass \"all\" for every task, or a task UUID/short prefix to filter to one task")
 
 	// issue timeline
 	issueTimelineCmd.Flags().String("output", "table", "Output format: table or json")
@@ -2174,17 +2174,23 @@ func runIssueUsage(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve issue: %w", err)
 	}
 
-	// Build API path. When --task is set, resolve the task ID (UUID
-	// passthrough or short prefix with issue context) and append as
-	// query param so the server filters the response to that task.
+	// Build API path. --task controls per-task detail:
+	//   absent       → no ?task param (no per-task detail)
+	//   --task       → ?task=all (all tasks)
+	//   --task <id>  → ?task=<resolved-id> (single task)
 	apiPath := "/api/issues/" + issueRef.ID + "/usage"
 	taskInput, _ := cmd.Flags().GetString("task")
-	if taskInput != "" {
-		taskRef, err := resolveTaskRunID(ctx, client, issueRef.ID, taskInput)
-		if err != nil {
-			return fmt.Errorf("resolve task: %w", err)
+	hasTaskDetail := taskInput != ""
+	if hasTaskDetail {
+		if taskInput == "all" {
+			apiPath += "?task=all"
+		} else {
+			taskRef, err := resolveTaskRunID(ctx, client, issueRef.ID, taskInput)
+			if err != nil {
+				return fmt.Errorf("resolve task: %w", err)
+			}
+			apiPath += "?task=" + url.QueryEscape(taskRef.ID)
 		}
-		apiPath += "?task=" + url.QueryEscape(taskRef.ID)
 	}
 
 	var usage map[string]any
@@ -2220,11 +2226,7 @@ func runIssueUsage(cmd *cobra.Command, args []string) error {
 	}}
 	cli.PrintTable(os.Stdout, headers, rows)
 
-	// Per-model breakdown. Server returns `by_model` as an array of
-	// {model, total_*_tokens, task_count, tasks:[...]}; render it as a
-	// second table so the CLI user can answer "which model burned the
-	// tokens" in a single glance. JSON output already includes this
-	// array verbatim.
+	// Per-model breakdown — always present (with or without --task).
 	if byModel, ok := usage["by_model"].([]any); ok && len(byModel) > 0 {
 		fmt.Fprintln(os.Stdout)
 		fmt.Fprintln(os.Stdout, "Per-model breakdown:")
@@ -2246,40 +2248,40 @@ func runIssueUsage(cmd *cobra.Command, args []string) error {
 		}
 		cli.PrintTable(os.Stdout, modelHeaders, modelRows)
 
-		// Per-task breakdown — flatten by_model[].tasks[] into a single
-		// table so the user can see which task burned what, grouped by
-		// model. Each task row carries the parent model name for context.
-		taskRows := make([][]string, 0)
-		for _, entry := range byModel {
-			m, ok := entry.(map[string]any)
-			if !ok {
-				continue
-			}
-			modelName := strVal(m, "model")
-			tasks, ok := m["tasks"].([]any)
-			if !ok || len(tasks) == 0 {
-				continue
-			}
-			for _, tEntry := range tasks {
-				t, ok := tEntry.(map[string]any)
+		// Per-task breakdown — ONLY rendered when --task was passed.
+		if hasTaskDetail {
+			taskRows := make([][]string, 0)
+			for _, entry := range byModel {
+				m, ok := entry.(map[string]any)
 				if !ok {
 					continue
 				}
-				taskRows = append(taskRows, []string{
-					truncateID(strVal(t, "task_id")),
-					modelName,
-					fmtN(t["input_tokens"]),
-					fmtN(t["output_tokens"]),
-					fmtN(t["cache_read_tokens"]),
-					fmtN(t["cache_write_tokens"]),
-				})
+				modelName := strVal(m, "model")
+				tasks, ok := m["tasks"].([]any)
+				if !ok || len(tasks) == 0 {
+					continue
+				}
+				for _, tEntry := range tasks {
+					t, ok := tEntry.(map[string]any)
+					if !ok {
+						continue
+					}
+					taskRows = append(taskRows, []string{
+						truncateID(strVal(t, "task_id")),
+						modelName,
+						fmtN(t["input_tokens"]),
+						fmtN(t["output_tokens"]),
+						fmtN(t["cache_read_tokens"]),
+						fmtN(t["cache_write_tokens"]),
+					})
+				}
 			}
-		}
-		if len(taskRows) > 0 {
-			fmt.Fprintln(os.Stdout)
-			fmt.Fprintln(os.Stdout, "Per-task breakdown:")
-			taskHeaders := []string{"TASK", "MODEL", "INPUT", "OUTPUT", "CACHE_READ", "CACHE_WRITE"}
-			cli.PrintTable(os.Stdout, taskHeaders, taskRows)
+			if len(taskRows) > 0 {
+				fmt.Fprintln(os.Stdout)
+				fmt.Fprintln(os.Stdout, "Task detail:")
+				taskHeaders := []string{"TASK", "MODEL", "INPUT", "OUTPUT", "CACHE_READ", "CACHE_WRITE"}
+				cli.PrintTable(os.Stdout, taskHeaders, taskRows)
+			}
 		}
 	}
 	return nil

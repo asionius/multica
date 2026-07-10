@@ -93,8 +93,8 @@ type GetIssueUsageByModelAndTaskRow struct {
 }
 
 // Per-(model, task) token breakdown. The handler folds these rows into
-// by_model[].tasks so clients can drill from model → task without a
-// second round-trip. Ordered by model then task_id for stable grouping.
+// by_model[].tasks so clients can drill from model → task. Ordered by
+// model then task_id for stable grouping.
 func (q *Queries) GetIssueUsageByModelAndTask(ctx context.Context, issueID pgtype.UUID) ([]GetIssueUsageByModelAndTaskRow, error) {
 	rows, err := q.db.Query(ctx, getIssueUsageByModelAndTask, issueID)
 	if err != nil {
