@@ -67,6 +67,10 @@ export interface IssueViewState {
   includeNoProject: boolean;
   /** Scope the issue list to a single parent issue (parent + its direct sub-issues). Null = all. */
   selectedParentIssueId: string | null;
+  /** When non-empty, only top-level parent issues matching one of these
+   *  statuses are shown, plus all their sub-issues (regardless of sub-issue
+   *  status). Board columns are NOT hidden — issues just get filtered out. */
+  parentStatusFilters: IssueStatus[];
   labelFilters: string[];
   sortBy: SortField;
   sortDirection: SortDirection;
@@ -82,6 +86,7 @@ export interface IssueViewState {
   toggleProjectFilter: (projectId: string) => void;
   toggleNoProject: () => void;
   setSelectedParentIssueId: (id: string | null) => void;
+  toggleParentStatusFilter: (status: IssueStatus) => void;
   toggleLabelFilter: (labelId: string) => void;
   hideStatus: (status: IssueStatus) => void;
   showStatus: (status: IssueStatus) => void;
@@ -103,6 +108,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   projectFilters: [],
   includeNoProject: false,
   selectedParentIssueId: null,
+  parentStatusFilters: [],
   labelFilters: [],
   sortBy: "position",
   sortDirection: "asc",
@@ -169,6 +175,12 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
   toggleNoProject: () =>
     set((state) => ({ includeNoProject: !state.includeNoProject })),
   setSelectedParentIssueId: (id) => set({ selectedParentIssueId: id }),
+  toggleParentStatusFilter: (status) =>
+    set((state) => ({
+      parentStatusFilters: state.parentStatusFilters.includes(status)
+        ? state.parentStatusFilters.filter((s) => s !== status)
+        : [...state.parentStatusFilters, status],
+    })),
   toggleLabelFilter: (labelId) =>
     set((state) => ({
       labelFilters: state.labelFilters.includes(labelId)
@@ -201,6 +213,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
       projectFilters: [],
       includeNoProject: false,
       selectedParentIssueId: null,
+      parentStatusFilters: [],
       labelFilters: [],
     }),
   setSortBy: (field) => set({ sortBy: field }),
@@ -234,6 +247,7 @@ export const viewStorePersistOptions = (name: string) => ({
     projectFilters: state.projectFilters,
     includeNoProject: state.includeNoProject,
     selectedParentIssueId: state.selectedParentIssueId,
+    parentStatusFilters: state.parentStatusFilters,
     labelFilters: state.labelFilters,
     sortBy: state.sortBy,
     sortDirection: state.sortDirection,

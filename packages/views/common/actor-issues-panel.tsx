@@ -150,6 +150,7 @@ export function ActorIssuesPanel({
         projectFilters,
         includeNoProject,
         selectedParentIssueId: null,
+        parentStatusFilters: [],
         labelFilters,
       }),
     [

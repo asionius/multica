@@ -11,6 +11,7 @@ const NO_FILTER: IssueFilters = {
   projectFilters: [],
   includeNoProject: false,
   selectedParentIssueId: null,
+  parentStatusFilters: [],
   labelFilters: [],
 };
 

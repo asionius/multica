@@ -14,8 +14,10 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
+import { ALL_STATUSES } from "@multica/core/issues/config";
+import { StatusIcon } from "./status-icon";
 import { useT } from "../../i18n";
-import type { Issue } from "@multica/core/types";
+import type { Issue, IssueStatus } from "@multica/core/types";
 
 const ITEM_CLASS =
   "group/item pr-1.5! [&>[data-slot=dropdown-menu-checkbox-item-indicator]]:hidden";
@@ -220,6 +222,8 @@ function ParentSelectorContent({
   onSelect: (id: string | null) => void;
 }) {
   const { t } = useT("issues");
+  const parentStatusFilters = useViewStore((s) => s.parentStatusFilters);
+  const storeApi = useViewStoreApi();
   const [search, setSearch] = useState("");
   const query = search.trim().toLowerCase();
   const filtered = useMemo(() => {
@@ -244,7 +248,55 @@ function ParentSelectorContent({
         />
       </div>
 
+      {/* Status quick-filter chips — click to toggle highlight.
+          Drives parentStatusFilters in the view store, which filters the
+          MAIN issue list (parent issues of matching status + their sub-issues).
+          Board columns are NOT hidden. */}
+      <div className="flex flex-wrap gap-1 px-2 py-1.5 border-b border-foreground/5">
+        <button
+          type="button"
+          onClick={() => {
+            // "全部议题" = clear all parent status filters
+            if (parentStatusFilters.length > 0) {
+              parentStatusFilters.forEach((s) =>
+                storeApi.getState().toggleParentStatusFilter(s),
+              );
+            }
+          }}
+          className={`rounded px-1.5 py-0.5 text-xs transition-colors ${
+            parentStatusFilters.length === 0
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-muted-foreground hover:bg-accent"
+          }`}
+        >
+          {t(($) => $.scopeBar.allIssues)}
+        </button>
+        {ALL_STATUSES.map((s) => {
+          const active = parentStatusFilters.includes(s);
+          return (
+            <button
+              key={s}
+              type="button"
+              onClick={() => storeApi.getState().toggleParentStatusFilter(s)}
+              className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-xs transition-colors ${
+                active
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              <StatusIcon
+                status={s}
+                className="size-3"
+                inheritColor={active}
+              />
+              {t(($) => $.status[s])}
+            </button>
+          );
+        })}
+      </div>
+
       <div className="max-h-80 overflow-y-auto p-1">
+        {/* Parent issue single-select section (radio-style) */}
         <DropdownMenuItem
           onClick={() => onSelect(null)}
           className="group/item"
@@ -277,7 +329,8 @@ function ParentSelectorContent({
               <span className="text-xs text-muted-foreground shrink-0 font-mono">
                 {issue.identifier}
               </span>
-              <span className="truncate" title={issue.title}>{issue.title}</span>
+              <span className="truncate flex-1" title={issue.title}>{issue.title}</span>
+              <StatusIcon status={issue.status} className="size-3.5 shrink-0" />
             </DropdownMenuItem>
           );
         })}

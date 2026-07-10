@@ -41,6 +41,7 @@ export function IssuesPage() {
   const projectFilters = useIssueViewStore((s) => s.projectFilters);
   const includeNoProject = useIssueViewStore((s) => s.includeNoProject);
   const selectedParentIssueId = useIssueViewStore((s) => s.selectedParentIssueId);
+  const parentStatusFilters = useIssueViewStore((s) => s.parentStatusFilters);
   const labelFilters = useIssueViewStore((s) => s.labelFilters);
   const usesAssigneeBoard = viewMode === "board" && grouping === "assignee";
 
@@ -100,8 +101,8 @@ export function IssuesPage() {
   const headerIssues = usesAssigneeBoard ? assigneeIssues : scopedIssues;
 
   const issues = useMemo(
-    () => filterIssues(scopedIssues, { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, selectedParentIssueId, labelFilters }),
-    [scopedIssues, statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, selectedParentIssueId, labelFilters],
+    () => filterIssues(scopedIssues, { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, selectedParentIssueId, parentStatusFilters, labelFilters }),
+    [scopedIssues, statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, selectedParentIssueId, parentStatusFilters, labelFilters],
   );
 
   // Fetch sub-issue progress from the backend so counts are accurate

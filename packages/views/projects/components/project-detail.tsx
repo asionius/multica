@@ -127,7 +127,7 @@ function ProjectIssuesContent({
   const labelFilters = useViewStore((s) => s.labelFilters);
 
   const issues = useMemo(
-    () => filterIssues(projectIssues, { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters: [], includeNoProject: false, selectedParentIssueId: null, labelFilters }),
+    () => filterIssues(projectIssues, { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters: [], includeNoProject: false, selectedParentIssueId: null, parentStatusFilters: [], labelFilters }),
     [projectIssues, statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, labelFilters],
   );
 
