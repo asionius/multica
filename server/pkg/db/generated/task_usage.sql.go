@@ -68,6 +68,60 @@ func (q *Queries) GetIssueUsageByModel(ctx context.Context, issueID pgtype.UUID)
 	return items, nil
 }
 
+const getIssueUsageByModelAndTask = `-- name: GetIssueUsageByModelAndTask :many
+SELECT
+    tu.model,
+    tu.task_id,
+    SUM(tu.input_tokens)::bigint AS total_input_tokens,
+    SUM(tu.output_tokens)::bigint AS total_output_tokens,
+    SUM(tu.cache_read_tokens)::bigint AS total_cache_read_tokens,
+    SUM(tu.cache_write_tokens)::bigint AS total_cache_write_tokens
+FROM task_usage tu
+JOIN agent_task_queue atq ON atq.id = tu.task_id
+WHERE atq.issue_id = $1
+GROUP BY tu.model, tu.task_id
+ORDER BY tu.model, tu.task_id
+`
+
+type GetIssueUsageByModelAndTaskRow struct {
+	Model                 string      `json:"model"`
+	TaskID                pgtype.UUID `json:"task_id"`
+	TotalInputTokens      int64       `json:"total_input_tokens"`
+	TotalOutputTokens     int64       `json:"total_output_tokens"`
+	TotalCacheReadTokens  int64       `json:"total_cache_read_tokens"`
+	TotalCacheWriteTokens int64       `json:"total_cache_write_tokens"`
+}
+
+// Per-(model, task) token breakdown. The handler folds these rows into
+// by_model[].tasks so clients can drill from model → task without a
+// second round-trip. Ordered by model then task_id for stable grouping.
+func (q *Queries) GetIssueUsageByModelAndTask(ctx context.Context, issueID pgtype.UUID) ([]GetIssueUsageByModelAndTaskRow, error) {
+	rows, err := q.db.Query(ctx, getIssueUsageByModelAndTask, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetIssueUsageByModelAndTaskRow{}
+	for rows.Next() {
+		var i GetIssueUsageByModelAndTaskRow
+		if err := rows.Scan(
+			&i.Model,
+			&i.TaskID,
+			&i.TotalInputTokens,
+			&i.TotalOutputTokens,
+			&i.TotalCacheReadTokens,
+			&i.TotalCacheWriteTokens,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getIssueUsageSummary = `-- name: GetIssueUsageSummary :one
 SELECT
     COALESCE(SUM(tu.input_tokens), 0)::bigint AS total_input_tokens,

@@ -2350,12 +2350,32 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 // GetIssueUsage returns aggregated token usage for all tasks belonging to an issue.
 // `by_model` carries the per-model breakdown so clients can answer "which model
 // burned the tokens" without a second round-trip; the top-level totals fold
-// those rows into a single sum for backwards-compatible callers.
+// those rows into a single sum for backwards-compatible callers. Each
+// `by_model` entry also carries a `tasks` array with per-task token counts
+// so clients can drill further (model → task). Optional `?task=<task-id>`
+// query param filters the entire response to a single task.
 func (h *Handler) GetIssueUsage(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
 		return
+	}
+
+	// Optional ?task=<task-id> filter. When present, validate the task
+	// belongs to this issue before filtering.
+	var taskFilter pgtype.UUID
+	if raw := r.URL.Query().Get("task"); raw != "" {
+		tid, err := util.ParseUUID(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid task id")
+			return
+		}
+		task, err := h.Queries.GetAgentTask(r.Context(), tid)
+		if err != nil || !task.IssueID.Valid || uuidToString(task.IssueID) != uuidToString(issue.ID) {
+			writeError(w, http.StatusNotFound, "task not found in this issue")
+			return
+		}
+		taskFilter = tid
 	}
 
 	row, err := h.Queries.GetIssueUsageSummary(r.Context(), issue.ID)
@@ -2370,8 +2390,33 @@ func (h *Handler) GetIssueUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	byModelTask, err := h.Queries.GetIssueUsageByModelAndTask(r.Context(), issue.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get issue usage by model and task")
+		return
+	}
+
+	// Group per-task rows by model for folding into by_model entries.
+	tasksByModel := make(map[string][]map[string]any)
+	for _, t := range byModelTask {
+		if taskFilter.Valid && uuidToString(t.TaskID) != uuidToString(taskFilter) {
+			continue
+		}
+		tasksByModel[t.Model] = append(tasksByModel[t.Model], map[string]any{
+			"task_id":              uuidToString(t.TaskID),
+			"input_tokens":         t.TotalInputTokens,
+			"output_tokens":        t.TotalOutputTokens,
+			"cache_read_tokens":    t.TotalCacheReadTokens,
+			"cache_write_tokens":   t.TotalCacheWriteTokens,
+		})
+	}
+
 	byModelResp := make([]map[string]any, 0, len(byModel))
 	for _, m := range byModel {
+		tasks := tasksByModel[m.Model]
+		if tasks == nil {
+			tasks = []map[string]any{}
+		}
 		byModelResp = append(byModelResp, map[string]any{
 			"model":                  m.Model,
 			"total_input_tokens":     m.TotalInputTokens,
@@ -2379,6 +2424,7 @@ func (h *Handler) GetIssueUsage(w http.ResponseWriter, r *http.Request) {
 			"total_cache_read_tokens": m.TotalCacheReadTokens,
 			"total_cache_write_tokens": m.TotalCacheWriteTokens,
 			"task_count":             m.TaskCount,
+			"tasks":                  tasks,
 		})
 	}
 

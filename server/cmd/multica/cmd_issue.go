@@ -270,8 +270,9 @@ var issueUsageCmd = &cobra.Command{
 	Long: "Sum input/output/cache tokens across every task this issue's agents have run. " +
 		"Backed by GET /api/issues/{id}/usage which JOIN-aggregates the raw task_usage " +
 		"table by issue_id; cost is constant in days but linear in the issue's task count " +
-		"(usually small). The response also includes `by_model`, a per-model breakdown " +
-		"so callers can attribute tokens to a specific model name.",
+		"(usually small). The response includes `by_model` (per-model breakdown) and " +
+		"each model entry carries a `tasks` array with per-task token counts. Use " +
+		"--task <task-id> to filter the response to a single task.",
 	Args: exactArgs(1),
 	RunE: runIssueUsage,
 }
@@ -340,6 +341,7 @@ func init() {
 
 	// issue usage
 	issueUsageCmd.Flags().String("output", "table", "Output format: table or json")
+	issueUsageCmd.Flags().String("task", "", "Filter to a specific task (UUID or short prefix; short prefix requires issue context)")
 
 	// issue timeline
 	issueTimelineCmd.Flags().String("output", "table", "Output format: table or json")
@@ -2172,8 +2174,21 @@ func runIssueUsage(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve issue: %w", err)
 	}
 
+	// Build API path. When --task is set, resolve the task ID (UUID
+	// passthrough or short prefix with issue context) and append as
+	// query param so the server filters the response to that task.
+	apiPath := "/api/issues/" + issueRef.ID + "/usage"
+	taskInput, _ := cmd.Flags().GetString("task")
+	if taskInput != "" {
+		taskRef, err := resolveTaskRunID(ctx, client, issueRef.ID, taskInput)
+		if err != nil {
+			return fmt.Errorf("resolve task: %w", err)
+		}
+		apiPath += "?task=" + url.QueryEscape(taskRef.ID)
+	}
+
 	var usage map[string]any
-	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/usage", &usage); err != nil {
+	if err := client.GetJSON(ctx, apiPath, &usage); err != nil {
 		return fmt.Errorf("get issue usage: %w", err)
 	}
 
@@ -2206,9 +2221,10 @@ func runIssueUsage(cmd *cobra.Command, args []string) error {
 	cli.PrintTable(os.Stdout, headers, rows)
 
 	// Per-model breakdown. Server returns `by_model` as an array of
-	// {model, total_*_tokens, task_count}; render it as a second table
-	// so the CLI user can answer "which model burned the tokens" in a
-	// single glance. JSON output already includes this array verbatim.
+	// {model, total_*_tokens, task_count, tasks:[...]}; render it as a
+	// second table so the CLI user can answer "which model burned the
+	// tokens" in a single glance. JSON output already includes this
+	// array verbatim.
 	if byModel, ok := usage["by_model"].([]any); ok && len(byModel) > 0 {
 		fmt.Fprintln(os.Stdout)
 		fmt.Fprintln(os.Stdout, "Per-model breakdown:")
@@ -2229,6 +2245,42 @@ func runIssueUsage(cmd *cobra.Command, args []string) error {
 			})
 		}
 		cli.PrintTable(os.Stdout, modelHeaders, modelRows)
+
+		// Per-task breakdown — flatten by_model[].tasks[] into a single
+		// table so the user can see which task burned what, grouped by
+		// model. Each task row carries the parent model name for context.
+		taskRows := make([][]string, 0)
+		for _, entry := range byModel {
+			m, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			modelName := strVal(m, "model")
+			tasks, ok := m["tasks"].([]any)
+			if !ok || len(tasks) == 0 {
+				continue
+			}
+			for _, tEntry := range tasks {
+				t, ok := tEntry.(map[string]any)
+				if !ok {
+					continue
+				}
+				taskRows = append(taskRows, []string{
+					truncateID(strVal(t, "task_id")),
+					modelName,
+					fmtN(t["input_tokens"]),
+					fmtN(t["output_tokens"]),
+					fmtN(t["cache_read_tokens"]),
+					fmtN(t["cache_write_tokens"]),
+				})
+			}
+		}
+		if len(taskRows) > 0 {
+			fmt.Fprintln(os.Stdout)
+			fmt.Fprintln(os.Stdout, "Per-task breakdown:")
+			taskHeaders := []string{"TASK", "MODEL", "INPUT", "OUTPUT", "CACHE_READ", "CACHE_WRITE"}
+			cli.PrintTable(os.Stdout, taskHeaders, taskRows)
+		}
 	}
 	return nil
 }

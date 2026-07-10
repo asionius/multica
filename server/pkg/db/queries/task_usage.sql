@@ -88,6 +88,23 @@ WHERE atq.issue_id = $1
 GROUP BY tu.model
 ORDER BY (SUM(tu.input_tokens) + SUM(tu.output_tokens)) DESC;
 
+-- name: GetIssueUsageByModelAndTask :many
+-- Per-(model, task) token breakdown. The handler folds these rows into
+-- by_model[].tasks so clients can drill from model → task without a
+-- second round-trip. Ordered by model then task_id for stable grouping.
+SELECT
+    tu.model,
+    tu.task_id,
+    SUM(tu.input_tokens)::bigint AS total_input_tokens,
+    SUM(tu.output_tokens)::bigint AS total_output_tokens,
+    SUM(tu.cache_read_tokens)::bigint AS total_cache_read_tokens,
+    SUM(tu.cache_write_tokens)::bigint AS total_cache_write_tokens
+FROM task_usage tu
+JOIN agent_task_queue atq ON atq.id = tu.task_id
+WHERE atq.issue_id = $1
+GROUP BY tu.model, tu.task_id
+ORDER BY tu.model, tu.task_id;
+
 -- name: ListDashboardUsageDaily :many
 -- Daily per-(date, model) token aggregates for the workspace, optionally
 -- scoped to a single project via sqlc.narg('project_id'). Bucketed by
