@@ -704,8 +704,6 @@ function CommentCardImpl({
               issueId={issueId}
               placeholder={t(($) => $.reply.placeholder)}
               size="sm"
-              avatarType="member"
-              avatarId={currentUserId ?? ""}
               draftKey={`reply:${issueId}:${entry.id}`}
               onSubmit={(content, attachmentIds) => onReply(entry.id, content, attachmentIds)}
             />

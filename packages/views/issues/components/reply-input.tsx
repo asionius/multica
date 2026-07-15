@@ -5,7 +5,6 @@ import { ArrowUp, Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { ContentEditor, type ContentEditorRef, useFileDropZone, FileDropOverlay } from "../../editor";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
-import { ActorAvatar } from "../../common/actor-avatar";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { api } from "@multica/core/api";
 import type { Attachment } from "@multica/core/types";
@@ -20,8 +19,6 @@ import { useT } from "../../i18n";
 interface ReplyInputProps {
   issueId: string;
   placeholder?: string;
-  avatarType: string;
-  avatarId: string;
   onSubmit: (content: string, attachmentIds?: string[]) => Promise<void>;
   size?: "sm" | "default";
   /** When set, hydrates/persists the in-progress reply via the draft store.
@@ -37,8 +34,6 @@ interface ReplyInputProps {
 function ReplyInput({
   issueId,
   placeholder,
-  avatarType,
-  avatarId,
   onSubmit,
   size = "default",
   draftKey,
@@ -107,26 +102,17 @@ function ReplyInput({
     }
   };
 
-  const avatarSize = size === "sm" ? 22 : 28;
-
   return (
-    <div className="group/editor flex items-start gap-2.5">
-      <ActorAvatar
-        actorType={avatarType}
-        actorId={avatarId}
-        size={avatarSize}
-        className="mt-0.5 shrink-0"
-      />
-      <div
-        {...dropZoneProps}
-        className={cn(
-          "relative min-w-0 flex-1 flex flex-col",
-          isExpanded
-            ? "h-[60vh]"
-            : size === "sm" ? "max-h-40" : "max-h-56",
-          (!isEmpty || isExpanded) && "pb-7",
-        )}
-      >
+    <div
+      {...dropZoneProps}
+      className={cn(
+        "relative min-w-0 flex flex-col",
+        isExpanded
+          ? "h-[60vh]"
+          : size === "sm" ? "max-h-40" : "max-h-56",
+        (!isEmpty || isExpanded) && "pb-7",
+      )}
+    >
         <div className="flex-1 min-h-0 overflow-y-auto">
           <ContentEditor
             ref={editorRef}
@@ -182,7 +168,6 @@ function ReplyInput({
           </button>
         </div>
         {isDragOver && <FileDropOverlay />}
-      </div>
     </div>
   );
 }
