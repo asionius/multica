@@ -88,7 +88,7 @@ export function ScopeSelectors({ allIssues }: { allIssues: Issue[] }) {
 
   const parentLabel = selectedParent
     ? selectedParent.title
-    : t(($) => $.scopeBar.allIssues);
+    : `${t(($) => $.scopeBar.allIssues)} (${parentCandidates.length})`;
 
   return (
     <div className="flex items-center gap-2 border-b px-4 py-2">
@@ -235,6 +235,15 @@ function ParentSelectorContent({
     );
   }, [candidates, query]);
 
+  // Count parent candidates per status for chip badges.
+  const statusCounts = useMemo(() => {
+    const counts = new Map<IssueStatus, number>();
+    for (const c of candidates) {
+      counts.set(c.status, (counts.get(c.status) ?? 0) + 1);
+    }
+    return counts;
+  }, [candidates]);
+
   return (
     <>
       <div className="px-2 py-1.5 border-b border-foreground/5">
@@ -251,28 +260,32 @@ function ParentSelectorContent({
       {/* Status quick-filter chips — click to toggle highlight.
           Drives parentStatusFilters in the view store, which filters the
           MAIN issue list (parent issues of matching status + their sub-issues).
-          Board columns are NOT hidden. */}
+          Board columns are NOT hidden. The "全部议题" chip also clears the
+          parent-issue selection so it serves as the universal reset. */}
       <div className="flex flex-wrap gap-1 px-2 py-1.5 border-b border-foreground/5">
         <button
           type="button"
           onClick={() => {
-            // "全部议题" = clear all parent status filters
             if (parentStatusFilters.length > 0) {
               parentStatusFilters.forEach((s) =>
                 storeApi.getState().toggleParentStatusFilter(s),
               );
             }
+            if (selected !== null) {
+              onSelect(null);
+            }
           }}
           className={`rounded px-1.5 py-0.5 text-xs transition-colors ${
-            parentStatusFilters.length === 0
+            parentStatusFilters.length === 0 && selected === null
               ? "bg-primary text-primary-foreground"
               : "bg-muted text-muted-foreground hover:bg-accent"
           }`}
         >
-          {t(($) => $.scopeBar.allIssues)}
+          {t(($) => $.scopeBar.allIssues)} ({candidates.length})
         </button>
         {ALL_STATUSES.map((s) => {
           const active = parentStatusFilters.includes(s);
+          const count = statusCounts.get(s) ?? 0;
           return (
             <button
               key={s}
@@ -290,23 +303,23 @@ function ParentSelectorContent({
                 inheritColor={active}
               />
               {t(($) => $.status[s])}
+              {count > 0 && (
+                <span className="opacity-60">{count}</span>
+              )}
             </button>
           );
         })}
       </div>
 
       <div className="max-h-80 overflow-y-auto p-1">
-        {/* Parent issue single-select section (radio-style) */}
-        <DropdownMenuItem
-          onClick={() => onSelect(null)}
-          className="group/item"
-        >
-          <div
-            className="border-input data-[selected=true]:border-primary data-[selected=true]:bg-primary data-[selected=true]:text-primary-foreground pointer-events-none size-4 shrink-0 rounded-full border transition-all select-none"
-            data-selected={selected === null}
-          />
-          <span>{t(($) => $.scopeBar.allIssues)}</span>
-        </DropdownMenuItem>
+        {/* Column header — aligns with the issue rows below.
+            Layout mirrors the row: [radio spacer] [ID] [title] [status] */}
+        <div className="flex items-center gap-2 px-2 py-1 text-xs font-medium text-muted-foreground/70">
+          <span className="size-4 shrink-0" />
+          <span className="shrink-0 font-mono">ID</span>
+          <span className="flex-1">{t(($) => $.scopeBar.parentIssue)}</span>
+          <span className="shrink-0 whitespace-nowrap">{t(($) => $.filters.section_status)}</span>
+        </div>
 
         {filtered.length === 0 && (
           <div className="px-2 py-3 text-center text-sm text-muted-foreground">
