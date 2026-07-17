@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -19,6 +20,13 @@ type TimelineEntry struct {
 	ActorType string `json:"actor_type"`
 	ActorID   string `json:"actor_id"`
 	CreatedAt string `json:"created_at"`
+
+	// createdAtTime carries the full-precision timestamp for sorting only.
+	// Not serialized — the JSON `created_at` field is RFC3339 (truncated to
+	// seconds), which loses sub-second ordering when multiple entries land
+	// in the same second. Without this, the mergeTimeline re-sort falls
+	// back to id-ASC and can reverse the DB's actual creation order.
+	createdAtTime time.Time
 
 	// Activity-only fields
 	Action  *string         `json:"action,omitempty"`
@@ -139,12 +147,12 @@ func (h *Handler) mergeTimeline(r *http.Request, comments []db.Comment, activiti
 	for _, a := range activities {
 		out = append(out, activityToEntry(a))
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].CreatedAt != out[j].CreatedAt {
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].createdAtTime.Equal(out[j].createdAtTime) {
 			if ascending {
-				return out[i].CreatedAt < out[j].CreatedAt
+				return out[i].createdAtTime.Before(out[j].createdAtTime)
 			}
-			return out[i].CreatedAt > out[j].CreatedAt
+			return out[i].createdAtTime.After(out[j].createdAtTime)
 		}
 		if ascending {
 			return out[i].ID < out[j].ID
@@ -182,6 +190,7 @@ func (h *Handler) commentsToEntries(r *http.Request, comments []db.Comment) []Ti
 			CommentType:    &commentType,
 			ParentID:       uuidToPtr(c.ParentID),
 			CreatedAt:      timestampToString(c.CreatedAt),
+			createdAtTime:  c.CreatedAt.Time,
 			UpdatedAt:      &updatedAt,
 			Reactions:      reactions[cid],
 			Attachments:    attachments[cid],
@@ -200,13 +209,14 @@ func activityToEntry(a db.ActivityLog) TimelineEntry {
 		actorType = a.ActorType.String
 	}
 	return TimelineEntry{
-		Type:      "activity",
-		ID:        uuidToString(a.ID),
-		ActorType: actorType,
-		ActorID:   uuidToString(a.ActorID),
-		Action:    &action,
-		Details:   a.Details,
-		CreatedAt: timestampToString(a.CreatedAt),
+		Type:          "activity",
+		ID:            uuidToString(a.ID),
+		ActorType:     actorType,
+		ActorID:       uuidToString(a.ActorID),
+		Action:        &action,
+		Details:       a.Details,
+		CreatedAt:     timestampToString(a.CreatedAt),
+		createdAtTime: a.CreatedAt.Time,
 	}
 }
 
