@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, FolderKanban, FolderMinus, GitBranch, Check } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@multica/ui/components/ui/button";
@@ -54,7 +54,21 @@ export function ScopeSelectors({ allIssues }: { allIssues: Issue[] }) {
   const selectedParentIssueId = useViewStore((s) => s.selectedParentIssueId);
   const storeApi = useViewStoreApi();
 
-  const { data: projects = [] } = useQuery(projectListOptions(wsId));
+  const { data: projects = [], isSuccess: projectsLoaded } = useQuery(projectListOptions(wsId));
+
+  // Prune stale project IDs from projectFilters that no longer exist in the
+  // live projects list (e.g. projects deleted after the filter was persisted).
+  // Without this, the button label counts deleted projects as "N projects"
+  // and filterIssues() silently matches nothing.
+  useEffect(() => {
+    if (!projectsLoaded) return; // wait for the query to settle
+    const liveIds = new Set(projects.map((p) => p.id));
+    const stale = projectFilters.filter((id) => !liveIds.has(id));
+    if (stale.length > 0) {
+      const pruned = projectFilters.filter((id) => liveIds.has(id));
+      storeApi.getState().setProjectFilters(pruned);
+    }
+  }, [projects, projectsLoaded, projectFilters, storeApi]);
 
   // Parent candidates: top-level issues (parent_issue_id === null), optionally
   // scoped to the selected projects.

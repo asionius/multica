@@ -84,6 +84,7 @@ export interface IssueViewState {
   toggleNoAssignee: () => void;
   toggleCreatorFilter: (value: ActorFilterValue) => void;
   toggleProjectFilter: (projectId: string) => void;
+  setProjectFilters: (projectIds: string[]) => void;
   toggleNoProject: () => void;
   setSelectedParentIssueId: (id: string | null) => void;
   toggleParentStatusFilter: (status: IssueStatus) => void;
@@ -174,6 +175,7 @@ export const viewStoreSlice = (set: StoreApi<IssueViewState>["setState"]): Issue
     })),
   toggleNoProject: () =>
     set((state) => ({ includeNoProject: !state.includeNoProject })),
+  setProjectFilters: (projectIds) => set({ projectFilters: projectIds }),
   setSelectedParentIssueId: (id) => set({ selectedParentIssueId: id }),
   toggleParentStatusFilter: (status) =>
     set((state) => ({
