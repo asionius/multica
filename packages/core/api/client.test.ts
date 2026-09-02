@@ -322,4 +322,37 @@ describe("ApiClient", () => {
       expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({ content: "again" });
     });
   });
+
+  describe("diagnostics", () => {
+    it("listDiagnostics falls back when diagnostics is the wrong type", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ diagnostics: "nope" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+      const client = new ApiClient("https://api.example.test");
+      const out = await client.listDiagnostics();
+      expect(out).toEqual({ diagnostics: [] });
+    });
+
+    it("getDiagnostic falls back when id is missing", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ session_id: 12 }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+      const client = new ApiClient("https://api.example.test");
+      const out = await client.getDiagnostic("diag-1");
+      expect(out.id).toBe("");
+      expect(out.file_manifest).toEqual([]);
+    });
+  });
 });

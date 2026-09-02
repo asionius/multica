@@ -76,6 +76,7 @@ describe("global path / reserved slug consistency", () => {
     "/invite/",
     "/auth/",
     "/cli/",
+    "/diagnostics",
   ];
 
   it("isGlobalPath agrees with the canonical global prefix list", () => {

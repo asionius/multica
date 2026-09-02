@@ -103,7 +103,8 @@
         "healthz",
         "ws",
         "metrics",
-        "ping"
+        "ping",
+        "diagnostics"
       ]
     },
     {

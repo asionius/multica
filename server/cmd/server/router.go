@@ -137,6 +137,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		UseDailyRollupForRuntimeUsage: os.Getenv("USAGE_DAILY_ROLLUP_ENABLED") == "true",
 		UseDailyRollupForDashboard:    os.Getenv("USAGE_DASHBOARD_ROLLUP_ENABLED") == "true",
 		PublicURL:                     strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+		DiagnosticsAdminEmails:        handler.DiagnosticsAdminEmailsFromEnv(os.Getenv("DIAGNOSTICS_ADMIN_EMAILS")),
 		TrustedProxies:                parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
@@ -264,7 +265,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/auth/smartgate-login", h.SmartGateLogin)
 	})
 
-
 	// Public config — deployment metadata the CLI needs before it has a token
 	// (primarily the browser-facing app URL so it can compose the verify link).
 	r.Get("/api/public/config", h.GetPublicConfig)
@@ -335,6 +335,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
+		r.Route("/api/diagnostics", func(r chi.Router) {
+			r.Post("/", h.CreateSessionDiagnostic)
+			r.Get("/", h.ListSessionDiagnostics)
+			r.Get("/{id}", h.GetSessionDiagnostic)
+			r.Get("/{id}/download", h.DownloadSessionDiagnostic)
+			r.Get("/{id}/files", h.GetSessionDiagnosticFile)
+		})
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
@@ -433,10 +440,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/labels", h.AttachLabel)
 					r.Delete("/labels/{labelId}", h.DetachLabel)
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
-				r.Get("/pipeline", h.GetIssuePipeline)
-				r.Patch("/pipeline/base", h.PatchIssuePipelineBase)
-				r.Patch("/pipeline/dynamic", h.PatchIssuePipelineDynamic)
-				r.Post("/verdict", h.PostIssueVerdict)
+					r.Get("/pipeline", h.GetIssuePipeline)
+					r.Patch("/pipeline/base", h.PatchIssuePipelineBase)
+					r.Patch("/pipeline/dynamic", h.PatchIssuePipelineDynamic)
+					r.Post("/verdict", h.PostIssueVerdict)
 				})
 			})
 

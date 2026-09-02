@@ -7,7 +7,9 @@ import type {
   CreateAgentFromTemplateResponse,
   GroupedIssuesResponse,
   ListIssuesResponse,
+  ListSessionDiagnosticsResponse,
   ListWebhookDeliveriesResponse,
+  SessionDiagnostic,
   TimelineEntry,
   WebhookDelivery,
 } from "../types";
@@ -450,6 +452,53 @@ export const WebhookDeliveryResponseSchema = WebhookDeliverySchema;
 export const EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE: ListWebhookDeliveriesResponse = {
   deliveries: [],
   total: 0,
+};
+
+const SessionDiagnosticFileEntrySchema = z.object({
+  path: z.string(),
+  size: z.number(),
+}).loose();
+
+export const SessionDiagnosticSchema = z.object({
+  id: z.string(),
+  session_id: z.string().default(""),
+  hostname: z.string().default(""),
+  plugin_version: z.string().default(""),
+  filename: z.string().default(""),
+  size_bytes: z.number().default(0),
+  file_count: z.number().default(0),
+  file_manifest: z.array(SessionDiagnosticFileEntrySchema).default([]),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  uploader_name: z.string().default(""),
+  uploader_email: z.string().default(""),
+  created_at: z.string().default(""),
+  view_url: z.string().default(""),
+  download_url: z.string().default(""),
+}).loose();
+
+export const ListSessionDiagnosticsResponseSchema = z.object({
+  diagnostics: z.array(SessionDiagnosticSchema).default([]),
+}).loose();
+
+export const EMPTY_SESSION_DIAGNOSTIC: SessionDiagnostic = {
+  id: "",
+  session_id: "",
+  hostname: "",
+  plugin_version: "",
+  filename: "",
+  size_bytes: 0,
+  file_count: 0,
+  file_manifest: [],
+  metadata: {},
+  uploader_name: "",
+  uploader_email: "",
+  created_at: "",
+  view_url: "",
+  download_url: "",
+};
+
+export const EMPTY_LIST_SESSION_DIAGNOSTICS_RESPONSE: ListSessionDiagnosticsResponse = {
+  diagnostics: [],
 };
 
 export const EMPTY_WEBHOOK_DELIVERY: WebhookDelivery = {

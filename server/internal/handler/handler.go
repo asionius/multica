@@ -71,14 +71,21 @@ type Config struct {
 	UseDailyRollupForDashboard bool
 	// PublicURL is the absolute base URL the API is reachable at from the
 	// public internet, with no trailing slash (e.g. "https://app.multica.ai").
-	// Used only to build webhook_url responses for autopilot webhook triggers
-	// — never for auth, routing, or workspace resolution. Empty when unset,
-	// in which case clients fall back to webhook_path + their own origin.
-	// Reading the public host from request headers (Host / X-Forwarded-Host)
-	// is intentionally avoided so a misconfigured reverse proxy cannot trick
-	// the server into minting webhook URLs pointing at an attacker-controlled
-	// host.
+	// Used to build webhook_url responses for autopilot webhook triggers and
+	// session-diagnostic view/download URLs. Empty when unset, in which case
+	// webhook clients fall back to webhook_path + their own origin, and
+	// diagnostics fall back to https://tmultica.woa.com. Reading the public
+	// host from request headers (Host / X-Forwarded-Host) is intentionally
+	// avoided so a misconfigured reverse proxy cannot trick the server into
+	// minting URLs pointing at an attacker-controlled host.
 	PublicURL string
+	// DiagnosticsAdminEmails is the allow-list of emails that can list and
+	// download every session diagnostic. Upload is open to any signed-in
+	// user; viewing others' archives is restricted to this list. Populated
+	// from DIAGNOSTICS_ADMIN_EMAILS (comma-separated list, multiple
+	// addresses allowed). Empty env uses defaultDiagnosticsAdminEmails.
+	// Comparison is case-insensitive.
+	DiagnosticsAdminEmails []string
 	// TrustedProxies are CIDRs whose source IP we trust to set
 	// X-Forwarded-For / X-Real-IP. Empty means "trust nothing": the rate
 	// limiter uses r.RemoteAddr exclusively. Populated via the

@@ -30,7 +30,6 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "verify",
   "reset",
   "password",
-  "cli", // global /cli/verify device-authorization page
   "onboarding",
 
   // Platform / marketing routes (current + likely-future)
@@ -112,6 +111,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "ws",
   "metrics",
   "ping",
+  "diagnostics",
 
   // RFC 2142 — privileged email mailboxes
   // Allowing user workspaces with these slugs would let attackers spoof system

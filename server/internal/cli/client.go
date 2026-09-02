@@ -439,6 +439,92 @@ func (c *APIClient) UploadFileWithURL(ctx context.Context, fileData []byte, file
 	return result.ID, result.URL, nil
 }
 
+// DiagnosticUploadOptions are the form fields the plugin sends with a
+// session-diagnostic archive.
+type DiagnosticUploadOptions struct {
+	SessionID     string
+	Hostname      string
+	PluginVersion string
+	Note          string
+}
+
+// DiagnosticUploadResult is the POST /api/diagnostics contract the plugin
+// parses (`id`, `view_url`, `download_url`).
+type DiagnosticUploadResult struct {
+	ID          string `json:"id"`
+	ViewURL     string `json:"view_url"`
+	DownloadURL string `json:"download_url"`
+}
+
+// UploadDiagnostic uploads a tar.gz session archive via multipart form to
+// /api/diagnostics. Extra form fields match the plugin's diagnose command.
+func (c *APIClient) UploadDiagnostic(ctx context.Context, fileData []byte, filename string, opts DiagnosticUploadOptions) (*DiagnosticUploadResult, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	part, err := writer.CreateFormFile("file", filepath.Base(filename))
+	if err != nil {
+		return nil, fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := part.Write(fileData); err != nil {
+		return nil, fmt.Errorf("write file data: %w", err)
+	}
+	fields := map[string]string{
+		"session_id":     opts.SessionID,
+		"hostname":       opts.Hostname,
+		"plugin_version": opts.PluginVersion,
+		"note":           opts.Note,
+	}
+	for k, v := range fields {
+		if v == "" {
+			continue
+		}
+		if err := writer.WriteField(k, v); err != nil {
+			return nil, fmt.Errorf("write %s field: %w", k, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/diagnostics", &body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	c.setHeaders(req)
+
+	httpClient := c.HTTPClient
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining > httpClient.Timeout {
+			clientCopy := *httpClient
+			clientCopy.Timeout = remaining
+			httpClient = &clientCopy
+		}
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respData, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("upload diagnostic returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respData)))
+	}
+
+	var result DiagnosticUploadResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode upload response: %w", err)
+	}
+	if result.ID == "" {
+		return nil, fmt.Errorf("upload response missing diagnostic id")
+	}
+	return &result, nil
+}
+
 // DownloadFile downloads a file from the given URL and returns the response body.
 // This is used for downloading attachments via their signed download_url.
 // Downloads are limited to 100 MB to match the upload size limit.

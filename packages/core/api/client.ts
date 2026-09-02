@@ -100,6 +100,8 @@ import type {
   Squad,
   SquadMember,
   SquadMemberStatusListResponse,
+  SessionDiagnostic,
+  ListSessionDiagnosticsResponse,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
@@ -134,6 +136,10 @@ import {
   SubscribersListSchema,
   TimelineEntriesSchema,
   WebhookDeliveryResponseSchema,
+  SessionDiagnosticSchema,
+  ListSessionDiagnosticsResponseSchema,
+  EMPTY_SESSION_DIAGNOSTIC,
+  EMPTY_LIST_SESSION_DIAGNOSTICS_RESPONSE,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -1765,5 +1771,42 @@ export class ApiClient {
 
   async listIssuePullRequests(issueId: string): Promise<{ pull_requests: GitHubPullRequest[] }> {
     return this.fetch(`/api/issues/${issueId}/pull-requests`);
+  }
+
+  // Session diagnostics (maintainer review of packed CLI/plugin sessions)
+  async listDiagnostics(): Promise<ListSessionDiagnosticsResponse> {
+    const raw = await this.fetch<unknown>("/api/diagnostics");
+    return parseWithFallback(
+      raw,
+      ListSessionDiagnosticsResponseSchema,
+      EMPTY_LIST_SESSION_DIAGNOSTICS_RESPONSE,
+      { endpoint: "GET /api/diagnostics" },
+    );
+  }
+
+  async getDiagnostic(id: string): Promise<SessionDiagnostic> {
+    const raw = await this.fetch<unknown>(`/api/diagnostics/${id}`);
+    return parseWithFallback(raw, SessionDiagnosticSchema, EMPTY_SESSION_DIAGNOSTIC, {
+      endpoint: "GET /api/diagnostics/{id}",
+    });
+  }
+
+  async getDiagnosticFile(id: string, path: string): Promise<string> {
+    const qs = new URLSearchParams({ path });
+    let res: Response;
+    try {
+      res = await this.fetchRaw(`/api/diagnostics/${id}/files?${qs}`);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 413) {
+        throw new PreviewTooLargeError();
+      }
+      throw err;
+    }
+    return res.text();
+  }
+
+  async downloadDiagnostic(id: string): Promise<Blob> {
+    const res = await this.fetchRaw(`/api/diagnostics/${id}/download`);
+    return res.blob();
   }
 }
