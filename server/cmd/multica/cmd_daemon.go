@@ -73,6 +73,7 @@ var daemonDiskUsageCmd = &cobra.Command{
 func init() {
 	f := daemonStartCmd.Flags()
 	f.Bool("foreground", false, "Run in the foreground instead of background")
+	f.Int("port", 0, "Local daemon HTTP port (default: profile-derived; 19514 for the default profile)")
 	f.String("daemon-id", "", "Unique daemon identifier (env: MULTICA_DAEMON_ID)")
 	f.String("device-name", "", "Human-readable device name (env: MULTICA_DAEMON_DEVICE_NAME)")
 	f.String("runtime-name", "", "Runtime display name (env: MULTICA_AGENT_RUNTIME_NAME)")
@@ -88,10 +89,14 @@ func init() {
 	daemonLogsCmd.Flags().IntP("lines", "n", 50, "Number of lines to show")
 
 	daemonStatusCmd.Flags().String("output", "table", "Output format: table or json")
+	daemonStatusCmd.Flags().Int("port", 0, "Local daemon HTTP port to query (default: the port recorded at start)")
+
+	daemonStopCmd.Flags().Int("port", 0, "Local daemon HTTP port to stop (default: the port recorded at start)")
 
 	// restart shares all the same flags as start
 	rf := daemonRestartCmd.Flags()
 	rf.Bool("foreground", false, "Run in the foreground instead of background")
+	rf.Int("port", 0, "Local daemon HTTP port (default: the port recorded at start)")
 	rf.String("daemon-id", "", "Unique daemon identifier (env: MULTICA_DAEMON_ID)")
 	rf.String("device-name", "", "Human-readable device name (env: MULTICA_DAEMON_DEVICE_NAME)")
 	rf.String("runtime-name", "", "Runtime display name (env: MULTICA_AGENT_RUNTIME_NAME)")
@@ -136,6 +141,10 @@ func daemonLogPathForProfile(profile string) string {
 	return filepath.Join(daemonDirForProfile(profile), "daemon.log")
 }
 
+func daemonPortPathForProfile(profile string) string {
+	return filepath.Join(daemonDirForProfile(profile), "daemon.port")
+}
+
 // healthPortForProfile returns the health check port for the given profile.
 // Default profile uses the standard port (19514). Named profiles get a
 // deterministic offset derived from the profile name.
@@ -151,30 +160,100 @@ func healthPortForProfile(profile string) int {
 	return daemon.DefaultHealthPort + 1 + (h % 1000)
 }
 
+// daemonPortFromFlag returns the --port flag value for a daemon command, or 0
+// when unset. Callers must only pass daemon subcommands: `setup self-host`
+// also defines a --port flag, but there it means the backend server port.
+func daemonPortFromFlag(cmd *cobra.Command) int {
+	if cmd == nil || cmd.Flags().Lookup("port") == nil {
+		return 0
+	}
+	port, _ := cmd.Flags().GetInt("port")
+	if port > 0 {
+		return port
+	}
+	return 0
+}
+
+// readDaemonPort returns the port recorded by the profile's last daemon start,
+// or 0 when none was recorded. This is what lets stop/status/restart find a
+// daemon that was started on a custom --port.
+func readDaemonPort(profile string) int {
+	data, err := os.ReadFile(daemonPortPathForProfile(profile))
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || port <= 0 || port > 65535 {
+		return 0
+	}
+	return port
+}
+
+// writeDaemonPort records the resolved port so later commands target the same
+// daemon. The file is intentionally kept after shutdown so the chosen port is
+// remembered across restarts.
+func writeDaemonPort(profile string, port int) {
+	if dir := daemonDirForProfile(profile); dir != "" {
+		os.MkdirAll(dir, 0o755)
+	}
+	if err := os.WriteFile(daemonPortPathForProfile(profile), []byte(strconv.Itoa(port)), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not write port file: %v\n", err)
+	}
+}
+
+// resolveHealthPort picks the daemon's local HTTP port: an explicit --port
+// wins, then the port recorded at the last start, then the profile default.
+func resolveHealthPort(portOverride int, profile string) int {
+	if portOverride > 0 {
+		return portOverride
+	}
+	if port := readDaemonPort(profile); port > 0 {
+		return port
+	}
+	return healthPortForProfile(profile)
+}
+
 // --- daemon start ---
 
 func runDaemonStart(cmd *cobra.Command, _ []string) error {
 	foreground, _ := cmd.Flags().GetBool("foreground")
 	if foreground {
-		return runDaemonForeground(cmd)
+		return runDaemonForeground(cmd, daemonPortFromFlag(cmd))
 	}
-	return runDaemonBackground(cmd)
+	return runDaemonBackground(cmd, daemonPortFromFlag(cmd))
 }
 
-func runDaemonBackground(cmd *cobra.Command) error {
+func runDaemonBackground(cmd *cobra.Command, portOverride int) error {
 	profile := resolveProfile(cmd)
-	healthPort := healthPortForProfile(profile)
+	healthPort := resolveHealthPort(portOverride, profile)
 
-	// Check if daemon is already running.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	health := checkDaemonHealthOnPort(ctx, healthPort)
-	if health["status"] == "running" {
+	// Refuse to start a second daemon for this profile. Check the requested
+	// port and the port this profile last ran on — they differ when the user
+	// moves the daemon with --port, and two daemons would race for the same
+	// daemon identity.
+	lastPort := readDaemonPort(profile)
+	if lastPort == 0 {
+		lastPort = healthPortForProfile(profile)
+	}
+	ports := []int{healthPort}
+	if lastPort != healthPort {
+		ports = append(ports, lastPort)
+	}
+	for _, port := range ports {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		health := checkDaemonHealthOnPort(ctx, port)
+		cancel()
+		if health["status"] != "running" {
+			continue
+		}
 		label := "daemon"
 		if profile != "" {
 			label = fmt.Sprintf("daemon [%s]", profile)
 		}
 		pid, _ := health["pid"].(float64)
+		if port != healthPort {
+			return fmt.Errorf("%s is already running on port %d (pid %v). Use 'daemon restart --port %d' to move it", label, port, int(pid), healthPort)
+		}
 		return fmt.Errorf("%s is already running (pid %v). Use 'daemon restart' to restart it", label, int(pid))
 	}
 
@@ -185,7 +264,7 @@ func runDaemonBackground(cmd *cobra.Command) error {
 	}
 
 	// Build child args: daemon start --foreground + forwarded flags.
-	args := buildDaemonStartArgs(cmd)
+	args := buildDaemonStartArgs(cmd, healthPort)
 
 	// Ensure daemon directory exists.
 	dir := daemonDirForProfile(profile)
@@ -244,7 +323,7 @@ func runDaemonBackground(cmd *cobra.Command) error {
 	for time.Now().Before(deadline) {
 		time.Sleep(500 * time.Millisecond)
 		hctx, hcancel := context.WithTimeout(context.Background(), 2*time.Second)
-		health = checkDaemonHealthOnPort(hctx, healthPort)
+		health := checkDaemonHealthOnPort(hctx, healthPort)
 		hcancel()
 		if health["status"] == "running" {
 			started = true
@@ -266,8 +345,11 @@ func runDaemonBackground(cmd *cobra.Command) error {
 }
 
 // buildDaemonStartArgs constructs args for the background child process.
-func buildDaemonStartArgs(cmd *cobra.Command) []string {
+func buildDaemonStartArgs(cmd *cobra.Command, healthPort int) []string {
 	args := []string{"daemon", "start", "--foreground"}
+	if healthPort > 0 {
+		args = append(args, "--port", strconv.Itoa(healthPort))
+	}
 
 	if v := flagString(cmd, "daemon-id"); v != "" {
 		args = append(args, "--daemon-id", v)
@@ -311,10 +393,11 @@ func buildDaemonStartArgs(cmd *cobra.Command) []string {
 	return args
 }
 
-func runDaemonForeground(cmd *cobra.Command) error {
+func runDaemonForeground(cmd *cobra.Command, portOverride int) error {
 	util.EnsureHiddenConsole()
 
 	profile := resolveProfile(cmd)
+	healthPort := resolveHealthPort(portOverride, profile)
 
 	serverURL := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", "")
 	if serverURL == "" {
@@ -328,7 +411,7 @@ func runDaemonForeground(cmd *cobra.Command) error {
 		DeviceName:  flagString(cmd, "device-name"),
 		RuntimeName: flagString(cmd, "runtime-name"),
 		Profile:     profile,
-		HealthPort:  healthPortForProfile(profile),
+		HealthPort:  healthPort,
 	}
 	if d, _ := cmd.Flags().GetDuration("poll-interval"); d > 0 {
 		overrides.PollInterval = d
@@ -373,6 +456,9 @@ func runDaemonForeground(cmd *cobra.Command) error {
 		os.WriteFile(daemonPIDPathForProfile(profile), []byte(strconv.Itoa(os.Getpid())), 0o644)
 	}
 	defer os.Remove(daemonPIDPathForProfile(profile))
+	// Record the listening port so stop/status/restart can reach us even when
+	// started on a custom --port.
+	writeDaemonPort(profile, healthPort)
 
 	if err := d.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
@@ -382,7 +468,7 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	if restartBin := d.RestartBinary(); restartBin != "" {
 		logger.Info("restarting daemon with updated binary", "path", restartBin)
 
-		args := buildDaemonStartArgs(cmd)
+		args := buildDaemonStartArgs(cmd, healthPort)
 		child := exec.Command(restartBin, args...)
 
 		logPath := daemonLogPathForProfile(profile)
@@ -431,7 +517,10 @@ func runDaemonForeground(cmd *cobra.Command) error {
 
 func runDaemonRestart(cmd *cobra.Command, args []string) error {
 	profile := resolveProfile(cmd)
-	healthPort := healthPortForProfile(profile)
+	// Stop the daemon this profile last started. That may differ from a newly
+	// requested --port, in which case we still want to stop the old one before
+	// moving to the new port.
+	healthPort := resolveHealthPort(0, profile)
 
 	// Stop if running.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -466,7 +555,7 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 
 func runDaemonStop(cmd *cobra.Command, _ []string) error {
 	profile := resolveProfile(cmd)
-	healthPort := healthPortForProfile(profile)
+	healthPort := resolveHealthPort(daemonPortFromFlag(cmd), profile)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -548,7 +637,7 @@ func requestDaemonShutdown(healthPort int) error {
 
 func runDaemonStatus(cmd *cobra.Command, _ []string) error {
 	profile := resolveProfile(cmd)
-	healthPort := healthPortForProfile(profile)
+	healthPort := resolveHealthPort(daemonPortFromFlag(cmd), profile)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

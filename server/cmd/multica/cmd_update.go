@@ -71,7 +71,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 
 func lookupDaemonDeviceName(cmd *cobra.Command) (bool, string) {
 	profile := resolveProfile(cmd)
-	healthPort := healthPortForProfile(profile)
+	healthPort := resolveHealthPort(0, profile)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	health := checkDaemonHealthOnPort(ctx, healthPort)

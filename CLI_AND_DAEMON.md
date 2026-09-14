@@ -115,16 +115,26 @@ To run in the foreground (useful for debugging):
 multica daemon start --foreground
 ```
 
+The daemon binds a local HTTP port (health/status, `127.0.0.1` only). By default it is derived from the profile — `19514` for the default profile, an offset for named profiles. Pass `--port` to pin a specific port:
+
+```bash
+multica daemon start --port 19520
+```
+
+The resolved port is recorded per profile, so `daemon stop`, `daemon status`, `daemon restart`, and `multica update` target the same daemon even when it was started on a custom port. To override for a single invocation, pass `--port` to those commands too.
+
 ### Stop
 
 ```bash
 multica daemon stop
+multica daemon stop --port 19520
 ```
 
 ### Status
 
 ```bash
 multica daemon status
+multica daemon status --port 19520
 multica daemon status --output json
 ```
 
