@@ -567,6 +567,57 @@ func (c *APIClient) DownloadFile(ctx context.Context, downloadURL string) ([]byt
 }
 
 // HealthCheck hits the /health endpoint and returns the response body.
+// PutBytes sends a raw byte body (no JSON encoding) and returns the response
+// headers. Used by the document store, where the value is an opaque file.
+func (c *APIClient) PutBytes(ctx context.Context, path string, data []byte, contentType string) (http.Header, error) {
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.BaseURL+path, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	c.setHeaders(req)
+	req.Header.Set("Content-Type", contentType)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("PUT %s returned %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return resp.Header, nil
+}
+
+// GetBytes fetches a raw response body together with its headers.
+func (c *APIClient) GetBytes(ctx context.Context, path string) ([]byte, http.Header, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	c.setHeaders(req)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, nil, fmt.Errorf("GET %s returned %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, resp.Header, nil
+}
+
 func (c *APIClient) HealthCheck(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/health", nil)
 	if err != nil {
