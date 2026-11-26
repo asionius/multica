@@ -86,6 +86,9 @@ type Config struct {
 	// addresses allowed). Empty env uses defaultDiagnosticsAdminEmails.
 	// Comparison is case-insensitive.
 	DiagnosticsAdminEmails []string
+	// DocStoreAllowedEmails is the allow-list for the personal document store
+	// (multica store CLI). Empty disables the feature.
+	DocStoreAllowedEmails []string
 	// TrustedProxies are CIDRs whose source IP we trust to set
 	// X-Forwarded-For / X-Real-IP. Empty means "trust nothing": the rate
 	// limiter uses r.RemoteAddr exclusively. Populated via the

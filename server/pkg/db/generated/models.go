@@ -247,6 +247,36 @@ type DaemonToken struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type DevReport struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	Version           string             `json:"version"`
+	ComparisonVersion pgtype.Text        `json:"comparison_version"`
+	Title             string             `json:"title"`
+	SchemaVersion     int32              `json:"schema_version"`
+	MetricVersion     string             `json:"metric_version"`
+	ObservationAsOf   pgtype.Timestamptz `json:"observation_as_of"`
+	Revision          int32              `json:"revision"`
+	BodyMarkdown      string             `json:"body_markdown"`
+	BodySha256        string             `json:"body_sha256"`
+	PublishKey        string             `json:"publish_key"`
+	RequestDigest     string             `json:"request_digest"`
+	PublishedBy       pgtype.UUID        `json:"published_by"`
+	PublishedAt       pgtype.Timestamptz `json:"published_at"`
+}
+
+type DocStore struct {
+	ID          pgtype.UUID        `json:"id"`
+	OwnerUserID pgtype.UUID        `json:"owner_user_id"`
+	Key         string             `json:"key"`
+	Value       []byte             `json:"value"`
+	ContentType string             `json:"content_type"`
+	SizeBytes   int64              `json:"size_bytes"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Feedback struct {
 	ID          pgtype.UUID        `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`

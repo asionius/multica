@@ -138,6 +138,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		UseDailyRollupForDashboard:    os.Getenv("USAGE_DASHBOARD_ROLLUP_ENABLED") == "true",
 		PublicURL:                     strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
 		DiagnosticsAdminEmails:        handler.DiagnosticsAdminEmailsFromEnv(os.Getenv("DIAGNOSTICS_ADMIN_EMAILS")),
+		DocStoreAllowedEmails:         handler.DocStoreAllowedEmailsFromEnv(os.Getenv("DOC_STORE_ALLOWED_EMAILS")),
 		TrustedProxies:                parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
@@ -269,6 +270,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// (primarily the browser-facing app URL so it can compose the verify link).
 	r.Get("/api/public/config", h.GetPublicConfig)
 
+	// Public read-only dev reports. Published reports are approved documents
+	// intended to be shareable without a workspace invitation; the workspace
+	// is resolved from ?workspace_slug / X-Workspace-Slug. Publishing stays
+	// behind the authenticated /api/dev-reports routes.
+	r.Route("/api/public/dev-reports", func(r chi.Router) {
+		r.Get("/", h.ListDevReports)
+		r.Get("/{id}", h.GetDevReport)
+		r.Get("/{id}/revisions", h.ListDevReportRevisions)
+		r.Get("/{id}/markdown", h.DownloadDevReportMarkdown)
+	})
+
 	// CLI device authorization (public — the CLI has no credentials yet)
 	r.Post("/api/cli/device/start", h.StartCLIDeviceAuth)
 	r.Post("/api/cli/device/poll", h.PollCLIDeviceAuth)
@@ -334,6 +346,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/me/starter-content/dismiss", h.DismissStarterContent)
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
+		// Personal document store (multica store CLI). User-scoped; the
+		// handler enforces the email allow-list.
+		r.Get("/api/doc-store", h.ListDocStoreKeys)
+		r.Get("/api/doc-store/*", h.GetDocStoreValue)
+		r.Put("/api/doc-store/*", h.PutDocStoreValue)
+		r.Delete("/api/doc-store/*", h.DeleteDocStoreValue)
 		r.Post("/api/feedback", h.CreateFeedback)
 		r.Route("/api/diagnostics", func(r chi.Router) {
 			r.Post("/", h.CreateSessionDiagnostic)
@@ -474,6 +492,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/resources", h.CreateProjectResource)
 					r.Delete("/resources/{resourceId}", h.DeleteProjectResource)
 				})
+			})
+
+			// Dev reports (published operations reports)
+			r.Route("/api/dev-reports", func(r chi.Router) {
+				r.Get("/", h.ListDevReports)
+				r.With(middleware.RequireWorkspaceRole(queries, "owner", "admin")).Post("/", h.PublishDevReport)
+				r.Get("/{id}", h.GetDevReport)
+				r.Get("/{id}/revisions", h.ListDevReportRevisions)
+				r.Get("/{id}/markdown", h.DownloadDevReportMarkdown)
 			})
 
 			// Squads

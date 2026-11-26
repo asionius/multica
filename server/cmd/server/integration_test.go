@@ -71,6 +71,9 @@ func TestMain(m *testing.M) {
 
 	bus := events.New()
 	registerListeners(bus, hub)
+	// Doc-store endpoints are allow-listed by email; configure the fixture
+	// accounts here because NewRouter reads the env once at construction.
+	os.Setenv("DOC_STORE_ALLOWED_EMAILS", integrationTestEmail+","+docStoreOtherEmail)
 	router := NewRouter(pool, hub, bus, analytics.NoopClient{}, nil)
 	testServer = httptest.NewServer(router)
 
