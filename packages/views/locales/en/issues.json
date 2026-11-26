@@ -267,7 +267,10 @@
       "bar_authors_more_other": "{{names}} and {{count}} others",
       "resolve_failed": "Failed to resolve thread",
       "unresolve_failed": "Failed to unresolve thread"
-    }
+    },
+    "copy_link_action": "Copy link to comment",
+    "link_copied_toast": "Link copied",
+    "link_copy_failed_toast": "Could not copy link"
   },
   "reply": {
     "placeholder": "Leave a reply...",

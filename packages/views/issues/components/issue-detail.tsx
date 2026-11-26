@@ -583,6 +583,29 @@ function SubIssueRow({ child }: { child: Issue }) {
 }
 
 // ---------------------------------------------------------------------------
+// Comment permalink helpers
+// ---------------------------------------------------------------------------
+
+const COMMENT_HASH_PREFIX = "#comment-";
+
+/**
+ * Reads `#comment-<id>` from the browser location. Returns null outside a
+ * browser (SSR / desktop shell) or when the hash is unrelated.
+ */
+export function readCommentHash(): string | null {
+  if (typeof window === "undefined") return null;
+  const hash = window.location.hash;
+  if (!hash.startsWith(COMMENT_HASH_PREFIX)) return null;
+  const raw = hash.slice(COMMENT_HASH_PREFIX.length);
+  if (!raw) return null;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 
@@ -666,6 +689,25 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // that: setState triggers the re-render that hands Virtuoso the element.
   const [scrollContainerEl, setScrollContainerEl] = useState<HTMLDivElement | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+
+  // Comment permalinks. Two URL shapes are accepted so a pasted link works in
+  // both the web app and the desktop shell:
+  //   ?comment=<commentId>   — readable through NavigationAdapter.searchParams
+  //   #comment-<commentId>   — native anchor; only meaningful in a browser
+  // The inbox deep-link already passes `highlightCommentId` directly, which
+  // wins over both.
+  // Initialised empty and filled from an effect so SSR and the first client
+  // render match; the scroll effect re-runs when the hash value arrives.
+  const [hashCommentId, setHashCommentId] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sync = () => setHashCommentId(readCommentHash());
+    sync();
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+  const urlCommentId = router.searchParams?.get("comment") || null;
+  const activeCommentId = highlightCommentId ?? urlCommentId ?? hashCommentId ?? undefined;
 
   // Per-session: which resolved threads the user has temporarily expanded.
   // Not persisted (matches Linear) — reload collapses everything back to bars.
@@ -911,13 +953,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // Deep-link target index in the flat items array. For root comments this is
   // a direct findIndex hit; for reply ids we look up the enclosing root.
   const targetIdx = useMemo(() => {
-    if (!highlightCommentId) return -1;
-    const direct = items.findIndex((it) => it.id === highlightCommentId);
+    if (!activeCommentId) return -1;
+    const direct = items.findIndex((it) => it.id === activeCommentId);
     if (direct >= 0) return direct;
-    const rootId = replyToRoot.get(highlightCommentId);
+    const rootId = replyToRoot.get(activeCommentId);
     if (!rootId) return -1;
     return items.findIndex((it) => it.id === rootId);
-  }, [items, highlightCommentId, replyToRoot]);
+  }, [items, activeCommentId, replyToRoot]);
 
   const {
     reactions: issueReactions,
@@ -1014,29 +1056,29 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // ref populates only on the post-loading render, so it's the signal that
   // the timeline (and the deep-link target id) has actually rendered.
   useEffect(() => {
-    if (!highlightCommentId || items.length === 0) return;
-    if (didHighlightRef.current === highlightCommentId) return;
+    if (!activeCommentId || items.length === 0) return;
+    if (didHighlightRef.current === activeCommentId) return;
 
-    const rootId = replyToRoot.get(highlightCommentId);
+    const rootId = replyToRoot.get(activeCommentId);
     if (
       rootId &&
-      rootId !== highlightCommentId &&
+      rootId !== activeCommentId &&
       items[targetIdx]?.kind === "resolved-bar"
     ) {
       toggleResolvedExpand(rootId, true);
       return;
     }
 
-    const el = document.getElementById(`comment-${highlightCommentId}`);
+    const el = document.getElementById(`comment-${activeCommentId}`);
     if (!el) return;
 
-    didHighlightRef.current = highlightCommentId;
+    didHighlightRef.current = activeCommentId;
     el.scrollIntoView({ block: "center" });
 
-    setHighlightedId(highlightCommentId);
+    setHighlightedId(activeCommentId);
     const fade = window.setTimeout(() => setHighlightedId(null), 2500);
     return () => clearTimeout(fade);
-  }, [highlightCommentId, items, targetIdx, scrollContainerEl, replyToRoot, toggleResolvedExpand]);
+  }, [activeCommentId, items, targetIdx, scrollContainerEl, replyToRoot, toggleResolvedExpand]);
 
   // Cmd-F / Ctrl-F on a virtualized timeline only searches what's mounted in
   // the viewport — off-screen comments are invisible to browser find-in-page.
@@ -1897,7 +1939,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               // on a target" have fundamentally opposed contracts (estimated
               // heights vs real heights). Trying to satisfy both in one
               // path is what produced the bug history this PR closes.
-              !highlightCommentId ? (
+              !activeCommentId ? (
                 !scrollContainerEl ? (
                   // Skeleton while the callback ref populates so the gap
                   // between IssueDetail mount and Virtuoso mount doesn't

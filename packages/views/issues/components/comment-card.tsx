@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useRef, useState } from "react";
-import { CheckCircle2, ChevronRight, Copy, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronRight, Copy, Link2, MoreHorizontal, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@multica/ui/components/ui/card";
 import { Button } from "@multica/ui/components/ui/button";
@@ -36,6 +36,8 @@ import { api } from "@multica/core/api";
 import { ReplyInput } from "./reply-input";
 import type { TimelineEntry, Attachment } from "@multica/core/types";
 import { useCommentCollapseStore, useCommentDraftStore } from "@multica/core/issues/stores";
+import { useWorkspacePaths } from "@multica/core/paths";
+import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 
 // ---------------------------------------------------------------------------
@@ -186,6 +188,8 @@ function CommentRow({
 }) {
   const { t } = useT("issues");
   const { getActorName } = useActorName();
+  const navigation = useNavigation();
+  const paths = useWorkspacePaths();
   const [editing, setEditing] = useState(false);
   const editEditorRef = useRef<ContentEditorRef>(null);
   const cancelledRef = useRef(false);
@@ -309,6 +313,20 @@ function CommentRow({
               }}>
                 <Copy className="h-3.5 w-3.5" />
                 {t(($) => $.comment.copy_action)}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  const url = navigation.getShareableUrl(
+                    `${paths.issueDetail(issueId)}?comment=${encodeURIComponent(entry.id)}`,
+                  );
+                  navigator.clipboard.writeText(url).then(
+                    () => toast.success(t(($) => $.comment.link_copied_toast)),
+                    () => toast.error(t(($) => $.comment.link_copy_failed_toast)),
+                  );
+                }}
+              >
+                <Link2 className="h-3.5 w-3.5" />
+                {t(($) => $.comment.copy_link_action)}
               </DropdownMenuItem>
               {(canEditEntry || canDeleteEntry) && (
                 <>

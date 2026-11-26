@@ -263,7 +263,10 @@
       "bar_authors_more_other": "{{names}} 等 {{count}} 人",
       "resolve_failed": "标记已解决失败",
       "unresolve_failed": "重新打开失败"
-    }
+    },
+    "copy_link_action": "复制评论链接",
+    "link_copied_toast": "链接已复制",
+    "link_copy_failed_toast": "复制链接失败"
   },
   "reply": {
     "placeholder": "回复...",

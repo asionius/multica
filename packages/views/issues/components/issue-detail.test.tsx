@@ -104,6 +104,7 @@ vi.mock("../../navigation", () => ({
   useNavigation: () => ({
     push: vi.fn(),
     pathname: "/issues/issue-1",
+    searchParams: new URLSearchParams(navState.comment ? { comment: navState.comment } : {}),
     getShareableUrl: (p: string) => `https://app.multica.com${p}`,
   }),
   NavigationProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -315,6 +316,8 @@ vi.mock("@multica/core/issues/stores", () => ({
 // it by default) so tests can assert the deep-link effect dispatched a
 // native scroll on the target node.
 const scrollIntoViewSpy = vi.hoisted(() => vi.fn());
+// Lets individual tests simulate opening /issues/x?comment=<id>.
+const navState = vi.hoisted(() => ({ comment: null as string | null }));
 
 vi.mock("react-virtuoso", () => ({
   Virtuoso: forwardRef(function MockVirtuoso(
@@ -732,6 +735,42 @@ describe("IssueDetail (shared)", () => {
       expect(screen.getByText(/changed status/i)).toBeInTheDocument();
     });
     expect(screen.getByText(/changed priority/i)).toBeInTheDocument();
+  });
+
+  describe("comment permalink scroll-to-comment", () => {
+    it("honours ?comment=<id> from the URL", async () => {
+      navState.comment = "comment-2";
+      try {
+        renderIssueDetail();
+        await waitFor(() => {
+          expect(document.getElementById("comment-comment-2")).not.toBeNull();
+        });
+        await waitFor(() => {
+          expect(scrollIntoViewSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ block: "center" }),
+          );
+        });
+      } finally {
+        navState.comment = null;
+      }
+    });
+
+    it("honours a #comment-<id> hash", async () => {
+      window.location.hash = "#comment-comment-2";
+      try {
+        renderIssueDetail();
+        await waitFor(() => {
+          expect(document.getElementById("comment-comment-2")).not.toBeNull();
+        });
+        await waitFor(() => {
+          expect(scrollIntoViewSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ block: "center" }),
+          );
+        });
+      } finally {
+        window.location.hash = "";
+      }
+    });
   });
 
   describe("highlightCommentId scroll-to-comment", () => {
