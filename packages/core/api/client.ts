@@ -102,6 +102,13 @@ import type {
   SquadMemberStatusListResponse,
   SessionDiagnostic,
   ListSessionDiagnosticsResponse,
+  DevReport,
+  DevReportDetail,
+  ListDevReportRevisionsResponse,
+  ListDevReportsParams,
+  ListDevReportsResponse,
+  PublishDevReportRequest,
+  PublishDevReportResponse,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
@@ -140,6 +147,12 @@ import {
   ListSessionDiagnosticsResponseSchema,
   EMPTY_SESSION_DIAGNOSTIC,
   EMPTY_LIST_SESSION_DIAGNOSTICS_RESPONSE,
+  DevReportDetailSchema,
+  DevReportSchema,
+  EMPTY_LIST_DEV_REPORTS_RESPONSE,
+  EMPTY_LIST_DEV_REPORT_REVISIONS_RESPONSE,
+  ListDevReportsResponseSchema,
+  ListDevReportRevisionsResponseSchema,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -1504,6 +1517,114 @@ export class ApiClient {
     await this.fetch(`/api/projects/${projectId}/resources/${resourceId}`, {
       method: "DELETE",
     });
+  }
+
+  // Dev reports — published, immutable operations-report revisions.
+  // Every response is schema-validated here so a drifted backend degrades to
+  // an empty list (list) or an explicit "unreadable" error (detail) instead of
+  // rendering fabricated content.
+  async listDevReports(params?: ListDevReportsParams): Promise<ListDevReportsResponse> {
+    const search = new URLSearchParams();
+    if (params?.version) search.set("version", params.version);
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    if (params?.offset != null) search.set("offset", String(params.offset));
+    const qs = search.toString();
+    const raw = await this.fetch(`/api/dev-reports${qs ? `?${qs}` : ""}`);
+    return parseWithFallback(raw, ListDevReportsResponseSchema, EMPTY_LIST_DEV_REPORTS_RESPONSE, {
+      endpoint: "dev-reports.list",
+    });
+  }
+
+  /**
+   * Returns null when the payload doesn't match the expected shape. Callers
+   * must treat null as "report unreadable" — never substitute an empty body.
+   */
+  async getDevReport(id: string): Promise<DevReportDetail | null> {
+    const raw = await this.fetch(`/api/dev-reports/${encodeURIComponent(id)}`);
+    return parseWithFallback<DevReportDetail | null>(raw, DevReportDetailSchema, null, {
+      endpoint: "dev-reports.detail",
+    });
+  }
+
+  async listDevReportRevisions(id: string): Promise<ListDevReportRevisionsResponse> {
+    const raw = await this.fetch(`/api/dev-reports/${encodeURIComponent(id)}/revisions`);
+    return parseWithFallback(
+      raw,
+      ListDevReportRevisionsResponseSchema,
+      EMPTY_LIST_DEV_REPORT_REVISIONS_RESPONSE,
+      { endpoint: "dev-reports.revisions" },
+    );
+  }
+
+  /** Raw Markdown body for the download/copy actions. */
+  async getDevReportMarkdown(id: string): Promise<string> {
+    const res = await this.fetchRaw(`/api/dev-reports/${encodeURIComponent(id)}/markdown`);
+    return res.text();
+  }
+
+  // Public (unauthenticated) read-only dev reports. Workspace is resolved from
+  // the slug in the query string, so these work for visitors who are not
+  // workspace members. Publishing has no public equivalent.
+  async listPublicDevReports(
+    workspaceSlug: string,
+    params?: ListDevReportsParams,
+  ): Promise<ListDevReportsResponse> {
+    const search = new URLSearchParams({ workspace_slug: workspaceSlug });
+    if (params?.version) search.set("version", params.version);
+    if (params?.limit != null) search.set("limit", String(params.limit));
+    if (params?.offset != null) search.set("offset", String(params.offset));
+    const raw = await this.fetch(`/api/public/dev-reports?${search.toString()}`);
+    return parseWithFallback(raw, ListDevReportsResponseSchema, EMPTY_LIST_DEV_REPORTS_RESPONSE, {
+      endpoint: "public-dev-reports.list",
+    });
+  }
+
+  async getPublicDevReport(
+    workspaceSlug: string,
+    id: string,
+  ): Promise<DevReportDetail | null> {
+    const raw = await this.fetch(
+      `/api/public/dev-reports/${encodeURIComponent(id)}?workspace_slug=${encodeURIComponent(workspaceSlug)}`,
+    );
+    return parseWithFallback<DevReportDetail | null>(raw, DevReportDetailSchema, null, {
+      endpoint: "public-dev-reports.detail",
+    });
+  }
+
+  async listPublicDevReportRevisions(
+    workspaceSlug: string,
+    id: string,
+  ): Promise<ListDevReportRevisionsResponse> {
+    const raw = await this.fetch(
+      `/api/public/dev-reports/${encodeURIComponent(id)}/revisions?workspace_slug=${encodeURIComponent(workspaceSlug)}`,
+    );
+    return parseWithFallback(
+      raw,
+      ListDevReportRevisionsResponseSchema,
+      EMPTY_LIST_DEV_REPORT_REVISIONS_RESPONSE,
+      { endpoint: "public-dev-reports.revisions" },
+    );
+  }
+
+  async getPublicDevReportMarkdown(workspaceSlug: string, id: string): Promise<string> {
+    const res = await this.fetchRaw(
+      `/api/public/dev-reports/${encodeURIComponent(id)}/markdown?workspace_slug=${encodeURIComponent(workspaceSlug)}`,
+    );
+    return res.text();
+  }
+
+  async publishDevReport(data: PublishDevReportRequest): Promise<PublishDevReportResponse> {
+    const raw = await this.fetch("/api/dev-reports", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    const parsed = parseWithFallback<DevReport | null>(raw, DevReportSchema, null, {
+      endpoint: "dev-reports.publish",
+    });
+    if (!parsed) {
+      throw new ApiError("Invalid dev report response", 200, "OK");
+    }
+    return parsed;
   }
 
   // Labels

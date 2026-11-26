@@ -76,7 +76,10 @@ export type WSEventType =
   | "github_installation:deleted"
   | "pull_request:linked"
   | "pull_request:updated"
-  | "pull_request:unlinked";
+  | "pull_request:unlinked"
+  // Published operations-report revisions. Identifier-only payload; used to
+  // invalidate the dev-report list/detail queries.
+  | "dev_report:published";
 
 export interface WSMessage<T = unknown> {
   type: WSEventType;

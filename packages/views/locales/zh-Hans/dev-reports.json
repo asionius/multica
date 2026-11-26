@@ -1,0 +1,27 @@
+{
+  "title": "研发运营报告",
+  "version_label": "版本",
+  "revision_label": "修订 r{{revision}}",
+  "comparison_label": "对照 {{version}}",
+  "observation_label": "观察截止",
+  "published_label": "发布时间",
+  "back_to_list": "全部报告",
+  "actions": {
+    "copy": "复制报告",
+    "copied": "已复制",
+    "download": "下载 Markdown",
+    "print": "打印"
+  },
+  "empty": {
+    "title": "暂无已发布报告",
+    "description": "该工作区发布并经批准的运营报告会显示在这里。"
+  },
+  "error": {
+    "title": "报告无法读取",
+    "description": "报告不存在或内容无法读取。此处不会展示空的或重新计算的报告来替代原文。",
+    "retry": "重试",
+    "action_failed": "操作失败，请重试。"
+  },
+  "loading": "正在加载报告…",
+  "back_to_workspace": "返回工作区"
+}

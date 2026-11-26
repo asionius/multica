@@ -58,6 +58,16 @@ export type {
   AssigneeFrequencyEntry,
 } from "./activity";
 export type { IssueSubscriber } from "./subscriber";
+export type {
+  DevReport,
+  DevReportDetail,
+  ListDevReportsResponse,
+  ListDevReportRevisionsResponse,
+  ListDevReportsParams,
+  PublishDevReportRequest,
+  PublishDevReportResponse,
+  DevReportPublishedPayload,
+} from "./dev-report";
 export type * from "./events";
 export type * from "./api";
 export type { Attachment } from "./attachment";

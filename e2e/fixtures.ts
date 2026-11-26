@@ -137,6 +137,31 @@ export class TestApiClient {
     await this.authedFetch(`/api/issues/${id}`, { method: "DELETE" });
   }
 
+  async publishDevReport(payload: Record<string, unknown>) {
+    const res = await this.authedFetch("/api/dev-reports", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => null);
+    return { status: res.status, body };
+  }
+
+  async listDevReports() {
+    const res = await this.authedFetch("/api/dev-reports");
+    return res.json() as Promise<{ reports: Array<Record<string, unknown>>; total: number }>;
+  }
+
+  /** Remove reports created by a test run (no delete API exists by design). */
+  async deleteDevReportsByVersion(version: string) {
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      await client.query("DELETE FROM dev_report WHERE version = $1", [version]);
+    } finally {
+      await client.end();
+    }
+  }
+
   /** Clean up all issues created during this test. */
   async cleanup() {
     for (const id of this.createdIssueIds) {

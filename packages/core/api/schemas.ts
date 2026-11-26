@@ -8,6 +8,10 @@ import type {
   GroupedIssuesResponse,
   ListIssuesResponse,
   ListSessionDiagnosticsResponse,
+  DevReport,
+  DevReportDetail,
+  ListDevReportRevisionsResponse,
+  ListDevReportsResponse,
   ListWebhookDeliveriesResponse,
   SessionDiagnostic,
   TimelineEntry,
@@ -522,3 +526,75 @@ export const EMPTY_WEBHOOK_DELIVERY: WebhookDelivery = {
   last_attempt_at: "",
   created_at: "",
 };
+
+// ---------------------------------------------------------------------------
+// Dev reports — published, immutable operations-report revisions.
+//
+// Leniency here mirrors the rest of this file: unknown fields pass through,
+// null-ish optional metadata degrades to null, arrays default to []. The
+// detail schema requires body_markdown on purpose: a malformed detail payload
+// must surface as "unreadable" rather than rendering a fabricated empty
+// report or zeroed metrics.
+// ---------------------------------------------------------------------------
+
+export const DevReportSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().default(""),
+  project_id: z.string().nullish().default(null),
+  version: z.string().default(""),
+  comparison_version: z.string().nullish().default(null),
+  title: z.string().default(""),
+  schema_version: z.number().default(1),
+  metric_version: z.string().default(""),
+  observation_as_of: z.string().default(""),
+  revision: z.number().default(0),
+  body_sha256: z.string().default(""),
+  published_by: z.string().default(""),
+  published_at: z.string().default(""),
+}).loose();
+
+export const DevReportDetailSchema = DevReportSchema.extend({
+  body_markdown: z.string(),
+});
+
+export const ListDevReportsResponseSchema = z.object({
+  reports: z.array(DevReportSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const ListDevReportRevisionsResponseSchema = z.object({
+  revisions: z.array(DevReportSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_LIST_DEV_REPORT_REVISIONS_RESPONSE: ListDevReportRevisionsResponse = {
+  revisions: [],
+  total: 0,
+};
+
+export const EMPTY_DEV_REPORT: DevReport = {
+  id: "",
+  workspace_id: "",
+  project_id: null,
+  version: "",
+  comparison_version: null,
+  title: "",
+  schema_version: 1,
+  metric_version: "",
+  observation_as_of: "",
+  revision: 0,
+  body_sha256: "",
+  published_by: "",
+  published_at: "",
+};
+
+export const EMPTY_DEV_REPORT_DETAIL: DevReportDetail = {
+  ...EMPTY_DEV_REPORT,
+  body_markdown: "",
+};
+
+export const EMPTY_LIST_DEV_REPORTS_RESPONSE: ListDevReportsResponse = {
+  reports: [],
+  total: 0,
+};
+

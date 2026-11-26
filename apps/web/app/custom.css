@@ -43,3 +43,27 @@
     --scrollbar-thumb-hover: oklch(0 0 0 / 18%);
     --scrollbar-track: transparent;
 }
+
+/* Print: report pages should print the body, not the app chrome. */
+@media print {
+  [data-slot="sidebar"],
+  [data-slot="sidebar-gap"],
+  [data-slot="sidebar-container"] {
+    display: none !important;
+  }
+
+  .dev-report-print-root {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  .dev-report-body table {
+    font-size: 10px;
+    page-break-inside: auto;
+  }
+
+  .dev-report-body tr {
+    page-break-inside: avoid;
+  }
+}
+

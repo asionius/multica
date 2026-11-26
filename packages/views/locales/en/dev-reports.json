@@ -1,0 +1,27 @@
+{
+  "title": "Development operations report",
+  "version_label": "Version",
+  "revision_label": "Revision r{{revision}}",
+  "comparison_label": "vs {{version}}",
+  "observation_label": "Observed through",
+  "published_label": "Published",
+  "back_to_list": "All reports",
+  "actions": {
+    "copy": "Copy report",
+    "copied": "Copied",
+    "download": "Download Markdown",
+    "print": "Print"
+  },
+  "empty": {
+    "title": "No report published yet",
+    "description": "Approved operations reports will appear here after they are published for this workspace."
+  },
+  "error": {
+    "title": "Report could not be loaded",
+    "description": "This report is unavailable or could not be read. Its content is left blank rather than replaced with an empty or recomputed report.",
+    "retry": "Retry",
+    "action_failed": "That action failed. Please try again."
+  },
+  "loading": "Loading report…",
+  "back_to_workspace": "Back to workspace"
+}
